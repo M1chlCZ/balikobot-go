@@ -1,28 +1,30 @@
-package carrier
+package carrier_test
 
 import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/m1chlcz/balikobot-go/carrier"
 )
 
 func TestConstantsUseWireValues(t *testing.T) {
 	t.Parallel()
 
-	codes := map[Code]string{
-		PPL:        "ppl",
-		DPD:        "dpd",
-		DPDCZ:      "dpdcz",
-		DPDSK:      "dpdsk",
-		GEIS:       "geis",
-		GLS:        "gls",
-		INTIME:     "intime",
-		CP:         "cp",
-		CESKAPOSTA: "ceskaposta",
-		BALIKOVNA:  "balikovna",
-		ZASILKOVNA: "zasilkovna",
-		SP:         "sp",
-		ULOZENKA:   "ulozenka",
+	codes := map[carrier.Code]string{
+		carrier.PPL:        "ppl",
+		carrier.DPD:        "dpd",
+		carrier.DPDCZ:      "dpdcz",
+		carrier.DPDSK:      "dpdsk",
+		carrier.GEIS:       "geis",
+		carrier.GLS:        "gls",
+		carrier.INTIME:     "intime",
+		carrier.CP:         "cp",
+		carrier.CESKAPOSTA: "ceskaposta",
+		carrier.BALIKOVNA:  "balikovna",
+		carrier.ZASILKOVNA: "zasilkovna",
+		carrier.SP:         "sp",
+		carrier.ULOZENKA:   "ulozenka",
 	}
 	for code, want := range codes {
 		if string(code) != want {
@@ -40,20 +42,20 @@ func TestConstantsUseWireValues(t *testing.T) {
 func TestFromStringNormalizesAndAcceptsCustomCodes(t *testing.T) {
 	t.Parallel()
 
-	cases := map[string]Code{
-		"ppl":                   PPL,
-		"  PPL\t":               PPL,
+	cases := map[string]carrier.Code{
+		"ppl":                   carrier.PPL,
+		"  PPL\t":               carrier.PPL,
 		"CustomCarrier9":        "customcarrier9",
 		"ab":                    "ab",
 		"a1":                    "a1",
 		"12":                    "12",
 		"lockers":               "lockers",
-		strings.Repeat("a", 32): Code(strings.Repeat("a", 32)),
+		strings.Repeat("a", 32): carrier.Code(strings.Repeat("a", 32)),
 	}
 	for input, want := range cases {
-		got, err := FromString(input)
-		if err != nil || got != want {
-			t.Errorf("FromString(%q) = %q, %v; want %q", input, got, err, want)
+		got, fromErr := carrier.FromString(input)
+		if fromErr != nil || got != want {
+			t.Errorf("FromString(%q) = %q, %v; want %q", input, got, fromErr, want)
 		}
 	}
 }
@@ -71,15 +73,15 @@ func TestFromStringRejectsMalformedCodes(t *testing.T) {
 		"žluťoučký",
 		strings.Repeat("a", 33),
 	} {
-		code, err := FromString(input)
-		if err == nil {
+		code, fromErr := carrier.FromString(input)
+		if fromErr == nil {
 			t.Errorf("FromString(%q) accepted %q", input, code)
 		}
-		if code != Code("") {
+		if code != carrier.Code("") {
 			t.Errorf("FromString(%q) code = %q, want empty", input, code)
 		}
-		if !strings.Contains(err.Error(), "carrier") {
-			t.Errorf("FromString(%q) error = %v, want carrier context", input, err)
+		if !strings.Contains(fromErr.Error(), "carrier") {
+			t.Errorf("FromString(%q) error = %v, want carrier context", input, fromErr)
 		}
 	}
 }
@@ -87,16 +89,18 @@ func TestFromStringRejectsMalformedCodes(t *testing.T) {
 func TestValidRejectsNonCanonicalValues(t *testing.T) {
 	t.Parallel()
 
-	if !PPL.Valid() || !Code("ab").Valid() || !Code("customcarrier9").Valid() {
+	if !carrier.PPL.Valid() || !carrier.Code("ab").Valid() || !carrier.Code("customcarrier9").Valid() {
 		t.Error("well-formed codes reported as invalid")
 	}
-	for _, code := range []Code{"", "P", "PPL", " ab", "ab ", "a-b", "a b", "čp", Code(strings.Repeat("a", 33))} {
+	for _, code := range []carrier.Code{
+		"", "P", "PPL", " ab", "ab ", "a-b", "a b", "čp", carrier.Code(strings.Repeat("a", 33)),
+	} {
 		if code.Valid() {
 			t.Errorf("Code(%q).Valid() = true", code)
 		}
 	}
-	if PPL.String() != "ppl" {
-		t.Errorf("PPL.String() = %q", PPL.String())
+	if carrier.PPL.String() != "ppl" {
+		t.Errorf("PPL.String() = %q", carrier.PPL.String())
 	}
 }
 
@@ -104,9 +108,9 @@ func TestJSONRoundTripUsesPlainStrings(t *testing.T) {
 	t.Parallel()
 
 	type record struct {
-		Carrier Code `json:"carrier"`
+		Carrier carrier.Code `json:"carrier"`
 	}
-	custom, err := FromString("MyCustomCarrier1")
+	custom, err := carrier.FromString("MyCustomCarrier1")
 	if err != nil {
 		t.Fatalf("FromString: %v", err)
 	}
@@ -117,15 +121,15 @@ func TestJSONRoundTripUsesPlainStrings(t *testing.T) {
 	if string(encoded) != `{"carrier":"mycustomcarrier1"}` {
 		t.Fatalf("encoded = %s", encoded)
 	}
-	encoded, err = json.Marshal(record{Carrier: ZASILKOVNA})
+	encoded, err = json.Marshal(record{Carrier: carrier.ZASILKOVNA})
 	if err != nil || string(encoded) != `{"carrier":"zasilkovna"}` {
 		t.Fatalf("constant encoded = %s, %v", encoded, err)
 	}
 	var decoded record
-	if err := json.Unmarshal([]byte(`{"carrier":"customcarrier9"}`), &decoded); err != nil {
-		t.Fatalf("Unmarshal: %v", err)
+	if unmarshalErr := json.Unmarshal([]byte(`{"carrier":"customcarrier9"}`), &decoded); unmarshalErr != nil {
+		t.Fatalf("Unmarshal: %v", unmarshalErr)
 	}
-	if decoded.Carrier != Code("customcarrier9") {
+	if decoded.Carrier != carrier.Code("customcarrier9") {
 		t.Fatalf("decoded = %q", decoded.Carrier)
 	}
 }

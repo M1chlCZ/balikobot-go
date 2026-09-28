@@ -21,64 +21,64 @@ import (
 // WhoAmI is the account information returned by the WHOAMI method.
 type WhoAmI struct {
 	// Status is the top-level provider status.
-	Status int
+	Status int `json:"Status"`
 	// LiveAccount reports whether the credentials belong to a live account.
 	// It is nil when the provider omits the flag.
-	LiveAccount *bool
+	LiveAccount *bool `json:"LiveAccount"`
 	// Carriers lists the carriers contracted by the account.
-	Carriers []WhoAmICarrier
+	Carriers []WhoAmICarrier `json:"Carriers"`
 }
 
 // WhoAmICarrier is one contracted carrier of the account.
 type WhoAmICarrier struct {
 	// Slug is the carrier code used in request paths.
-	Slug carrier.Code
+	Slug carrier.Code `json:"Slug"`
 	// Name is the carrier display name. It can be empty.
-	Name string
+	Name string `json:"Name"`
 }
 
 // Carrier aggregates the discovered services of one contracted carrier.
 type Carrier struct {
 	// CarrierCode is the carrier code used in request paths.
-	CarrierCode carrier.Code
+	CarrierCode carrier.Code `json:"CarrierCode"`
 	// Services lists the activated services of the carrier.
-	Services []Service
+	Services []Service `json:"Services"`
 }
 
 // Service describes one activated carrier service.
 type Service struct {
 	// Code is the provider service code.
-	Code string
+	Code string `json:"Code"`
 	// Name is the provider service name.
-	Name string
+	Name string `json:"Name"`
 	// HomeDelivery reports home delivery support. Nil means that the
 	// provider did not declare the flag.
-	HomeDelivery *bool
+	HomeDelivery *bool `json:"HomeDelivery"`
 	// BoxDelivery reports box delivery support. Nil means that the provider
 	// did not declare the flag.
-	BoxDelivery *bool
+	BoxDelivery *bool `json:"BoxDelivery"`
 	// PickupPointsDelivery reports pickup point delivery support. Nil means
 	// that the provider did not declare the flag.
-	PickupPointsDelivery *bool
+	PickupPointsDelivery *bool `json:"PickupPointsDelivery"`
 	// Countries maps the destination country codes supported by the service.
 	// CarrierCapabilities keeps only EU destinations, matching the reference
 	// integration.
-	Countries map[country.Code]bool
+	Countries map[country.Code]bool `json:"Countries"`
 	// COD lists the supported cash-on-delivery destinations. The combined
 	// discovery leaves it empty because it does not request the optional COD
 	// dictionary.
-	COD []CODCapability
+	COD []CODCapability `json:"COD"`
 }
 
 // CODCapability is one cash-on-delivery destination of a service.
 type CODCapability struct {
 	// Country is the ISO 3166-1 alpha-2 destination country.
-	Country country.Code
+	Country country.Code `json:"Country"`
 	// Currency is the three-letter currency code.
-	Currency currency.Code
+	Currency currency.Code `json:"Currency"`
 	// MaxAmountMinor is the maximum cash-on-delivery amount in minor units,
 	// for example 149995 for 1499.95 CZK.
-	MaxAmountMinor int64
+	MaxAmountMinor int64 `json:"MaxAmountMinor"`
 }
 
 // ActivatedServices is the ACTIVATEDSERVICES answer of one carrier.
@@ -747,6 +747,10 @@ func isEUCountryCode(code country.Code) bool {
 		country.IT, country.LV, country.LT, country.LU, country.MT, country.NL, country.PL,
 		country.PT, country.RO, country.SK, country.SI, country.ES, country.SE:
 		return true
+	case country.GB, country.CH, country.NO, country.IS, country.LI, country.UA,
+		country.RS, country.BA, country.ME, country.MK, country.AL, country.TR,
+		country.US, country.CA:
+		return false
 	}
 	return false
 }

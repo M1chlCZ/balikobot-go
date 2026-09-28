@@ -1,3 +1,4 @@
+//nolint:testpackage // White-box tests exercise the unexported validateAddPackage helper.
 package balikobot
 
 import (
@@ -136,25 +137,25 @@ func TestEnumFieldsRoundTripAsPlainJSONStrings(t *testing.T) {
 		t.Fatalf("Marshal: %v", err)
 	}
 	var wire map[string]any
-	if err := json.Unmarshal(encoded, &wire); err != nil {
-		t.Fatalf("Unmarshal: %v", err)
+	if unmarshalErr := json.Unmarshal(encoded, &wire); unmarshalErr != nil {
+		t.Fatalf("Unmarshal: %v", unmarshalErr)
 	}
 	if wire["rec_country"] != "XK" || wire["cod_currency"] != "JPY" {
 		t.Fatalf("typed fields = %#v and %#v", wire["rec_country"], wire["cod_currency"])
 	}
 	var decoded AddPackageRequest
-	if err := json.Unmarshal(encoded, &decoded); err != nil {
-		t.Fatalf("round-trip Unmarshal: %v", err)
+	if unmarshalErr := json.Unmarshal(encoded, &decoded); unmarshalErr != nil {
+		t.Fatalf("round-trip Unmarshal: %v", unmarshalErr)
 	}
 	if decoded.RecCountry != country.Code("XK") || decoded.CODCurrency != currency.Code("JPY") {
 		t.Fatalf("round-trip request = %#v", decoded)
 	}
 
 	var capability CODCapability
-	if err := json.Unmarshal(
+	if unmarshalErr := json.Unmarshal(
 		[]byte(`{"Country":"DE","Currency":"EUR","MaxAmountMinor":149995}`), &capability,
-	); err != nil {
-		t.Fatalf("capability Unmarshal: %v", err)
+	); unmarshalErr != nil {
+		t.Fatalf("capability Unmarshal: %v", unmarshalErr)
 	}
 	if capability.Country != country.DE || capability.Currency != currency.EUR {
 		t.Fatalf("capability = %#v", capability)
@@ -165,16 +166,16 @@ func TestEnumFieldsRoundTripAsPlainJSONStrings(t *testing.T) {
 	}
 
 	var branch Branch
-	if err := json.Unmarshal([]byte(`{"Country":"CZ"}`), &branch); err != nil {
-		t.Fatalf("branch Unmarshal: %v", err)
+	if unmarshalErr := json.Unmarshal([]byte(`{"Country":"CZ"}`), &branch); unmarshalErr != nil {
+		t.Fatalf("branch Unmarshal: %v", unmarshalErr)
 	}
 	if branch.Country != country.CZ {
 		t.Fatalf("branch country = %q", branch.Country)
 	}
 
 	var who WhoAmICarrier
-	if err := json.Unmarshal([]byte(`{"Slug":"customcarrier","Name":"Custom"}`), &who); err != nil {
-		t.Fatalf("whoami carrier Unmarshal: %v", err)
+	if unmarshalErr := json.Unmarshal([]byte(`{"Slug":"customcarrier","Name":"Custom"}`), &who); unmarshalErr != nil {
+		t.Fatalf("whoami carrier Unmarshal: %v", unmarshalErr)
 	}
 	if who.Slug != carrier.Code("customcarrier") {
 		t.Fatalf("whoami slug = %q", who.Slug)

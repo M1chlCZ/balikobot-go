@@ -247,6 +247,9 @@ func ResolveBranchID(carrierCode carrier.Code, service, branchID, branchZip stri
 		return branchID
 	case carrier.PPL:
 		return strings.TrimPrefix(branchID, "KM")
+	case carrier.DPD, carrier.DPDCZ, carrier.DPDSK, carrier.GEIS, carrier.GLS,
+		carrier.INTIME, carrier.CESKAPOSTA, carrier.BALIKOVNA, carrier.ZASILKOVNA:
+		return branchID
 	default:
 		return branchID
 	}
@@ -392,8 +395,8 @@ func (client *Client) Overview(
 	if decodeErr != nil {
 		return nil, ErrInvalidResponse
 	}
-	if err := topLevelStatusError(result.Status); err != nil {
-		return nil, err
+	if statusErr := topLevelStatusError(result.Status); statusErr != nil {
+		return nil, statusErr
 	}
 	packages := make([]OverviewPackage, 0, len(result.Packages))
 	for _, entry := range result.Packages {
@@ -436,8 +439,8 @@ func (client *Client) Labels(
 		return "", &TransientError{}
 	}
 	defer response.Body.Close()
-	if err := labelLookupResponseError(response); err != nil {
-		return "", err
+	if lookupErr := labelLookupResponseError(response); lookupErr != nil {
+		return "", lookupErr
 	}
 	var result labelsResponse
 	decodeErr := client.decodeResponse(ctx, response, &result)
@@ -447,8 +450,8 @@ func (client *Client) Labels(
 	if decodeErr != nil || len(result.Status) == 0 {
 		return "", ErrInvalidResponse
 	}
-	if err := topLevelStatusError(result.Status); err != nil {
-		return "", err
+	if statusErr := topLevelStatusError(result.Status); statusErr != nil {
+		return "", statusErr
 	}
 	if !validLabelURL(client, result.LabelsURL) {
 		return "", ErrInvalidResponse
@@ -478,8 +481,8 @@ func (client *Client) OrderViewLabels(
 		return "", &TransientError{}
 	}
 	defer response.Body.Close()
-	if err := labelLookupResponseError(response); err != nil {
-		return "", err
+	if lookupErr := labelLookupResponseError(response); lookupErr != nil {
+		return "", lookupErr
 	}
 	var result orderViewResponse
 	decodeErr := client.decodeResponse(ctx, response, &result)
@@ -489,8 +492,8 @@ func (client *Client) OrderViewLabels(
 	if decodeErr != nil {
 		return "", ErrInvalidResponse
 	}
-	if err := topLevelStatusError(result.Status); err != nil {
-		return "", err
+	if statusErr := topLevelStatusError(result.Status); statusErr != nil {
+		return "", statusErr
 	}
 	member := false
 	for _, candidate := range result.PackageIDs {

@@ -59,6 +59,8 @@ const (
 	contentTypeJSON        = "application/json"
 	mimeTypePDF            = "application/pdf"
 	mimeTypeZPL            = "application/zpl"
+	schemeHTTP             = "http"
+	schemeHTTPS            = "https"
 	nullLiteral            = "null"
 	accountModeCacheTTL    = 5 * time.Minute
 	credentialUserLimit    = 100
@@ -111,7 +113,7 @@ var (
 )
 
 // TransientError reports a retryable provider answer and carries the optional
-// Retry-After hint of the provider. It matches ErrUnavailable with errors.Is.
+// Retry-After hint of the provider. It matches ErrUnavailable with [errors.Is].
 type TransientError struct {
 	// RetryAfter is the provider retry hint. A zero value means that the
 	// provider sent no hint and the caller should apply its own backoff.
@@ -126,8 +128,8 @@ func (err *TransientError) Error() string {
 	return ErrUnavailable.Error() + " (retry after " + err.RetryAfter.String() + ")"
 }
 
-// Unwrap returns ErrUnavailable, so errors.Is(err, ErrUnavailable) is true for
-// every transient provider answer.
+// Unwrap returns ErrUnavailable, so [errors.Is](err, ErrUnavailable) is true
+// for every transient provider answer.
 func (err *TransientError) Unwrap() error {
 	return ErrUnavailable
 }
@@ -200,7 +202,9 @@ func New(config Config) (*Client, error) {
 		return nil, errors.New("balikobot: invalid configuration: timeout must not be negative")
 	}
 	if config.MaxResponseBytes < 0 || config.MaxResponseBytes > maxResponseBytesLimit {
-		return nil, errors.New("balikobot: invalid configuration: response limit must be between 0 and 1073741824 bytes")
+		return nil, errors.New(
+			"balikobot: invalid configuration: response limit must be between 0 and 1073741824 bytes",
+		)
 	}
 	baseURL := strings.TrimSpace(config.BaseURL)
 	if baseURL == "" {
@@ -256,15 +260,19 @@ func validateBaseURL(raw string) (string, bool, error) {
 	if err != nil || parsed.Host == "" || parsed.User != nil ||
 		parsed.RawQuery != "" || parsed.Fragment != "" ||
 		(parsed.Path != "" && parsed.Path != "/") {
-		return "", false, errors.New("balikobot: invalid configuration: base URL must be absolute without path, query or fragment")
+		return "", false, errors.New(
+			"balikobot: invalid configuration: base URL must be absolute without path, query or fragment",
+		)
 	}
 	address := net.ParseIP(parsed.Hostname())
 	loopback := address != nil && address.IsLoopback()
 	switch parsed.Scheme {
-	case "https":
-	case "http":
+	case schemeHTTPS:
+	case schemeHTTP:
 		if !loopback {
-			return "", false, errors.New("balikobot: invalid configuration: base URL must use https unless the host is loopback")
+			return "", false, errors.New(
+				"balikobot: invalid configuration: base URL must use https unless the host is loopback",
+			)
 		}
 	default:
 		return "", false, errors.New("balikobot: invalid configuration: base URL must use http or https")
@@ -291,7 +299,11 @@ func newHTTPClient(injected *http.Client, timeout time.Duration) (*http.Client, 
 		clone.CheckRedirect = refuseRedirect
 		return &clone, nil
 	}
-	transport := http.DefaultTransport.(*http.Transport).Clone()
+	defaultTransport, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		panic("balikobot: default transport is not an *http.Transport")
+	}
+	transport := defaultTransport.Clone()
 	transport.DialContext = (&net.Dialer{Timeout: min(timeout, dialTimeout)}).DialContext
 	transport.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12}
 	client := &http.Client{
@@ -377,25 +389,25 @@ func (client *Client) verifiedWhoAmI(ctx context.Context, allowCached bool) (who
 // Branch describes one carrier branch or pickup point.
 type Branch struct {
 	// ID is the branch identifier used by the carrier.
-	ID string
+	ID string `json:"ID"`
 	// Type is the provider branch type, for example "branch" or "box".
-	Type string
+	Type string `json:"Type"`
 	// Name is the display name. It falls back to Zip when the provider sends
 	// no name.
-	Name string
+	Name string `json:"Name"`
 	// Street is the street part of the address.
-	Street string
+	Street string `json:"Street"`
 	// City is the city part of the address.
-	City string
+	City string `json:"City"`
 	// Zip is the postal code.
-	Zip string
+	Zip string `json:"Zip"`
 	// Country is the ISO 3166-1 alpha-2 country code. It can be empty when
 	// the provider omits it for a domestic branch.
-	Country country.Code
+	Country country.Code `json:"Country"`
 	// Latitude is the GPS latitude when the provider sent a valid pair.
-	Latitude *float64
+	Latitude *float64 `json:"Latitude"`
 	// Longitude is the GPS longitude when the provider sent a valid pair.
-	Longitude *float64
+	Longitude *float64 `json:"Longitude"`
 }
 
 type branchesResponse struct {
@@ -613,6 +625,8 @@ func branchesPath(carrierCode carrier.Code, service string, countryCode country.
 		return path + "/country/" + string(countryCode), true
 	case carrier.ZASILKOVNA:
 		return "/" + string(carrierCode) + "/branches/country/" + string(countryCode), false
+	case carrier.SP, carrier.ULOZENKA:
+		return path, true
 	default:
 		return path, true
 	}
@@ -693,37 +707,42 @@ func validLabelURL(client *Client, raw string) bool {
 		return false
 	}
 	if len(client.labelHosts) > 0 {
-		if !labelSchemeAllowed(parsed) {
-			return false
-		}
-		host := strings.ToLower(parsed.Host)
-		hostname := strings.ToLower(parsed.Hostname())
-		for _, allowed := range client.labelHosts {
-			if strings.HasPrefix(allowed, ".") {
-				if strings.HasSuffix(hostname, allowed) {
-					return true
-				}
-				continue
-			}
-			if host == allowed {
-				return true
-			}
-		}
-		return false
+		return labelHostAllowed(parsed, client.labelHosts)
 	}
 	if client.loopback {
 		return parsed.Scheme+"://"+parsed.Host == client.origin
 	}
-	return parsed.Scheme == "https" &&
+	return parsed.Scheme == schemeHTTPS &&
 		(parsed.Host == "pdf.balikobot.cz" ||
 			strings.HasSuffix(parsed.Host, ".balikobot.cz"))
 }
 
+func labelHostAllowed(parsed *url.URL, allowedHosts []string) bool {
+	if !labelSchemeAllowed(parsed) {
+		return false
+	}
+	host := strings.ToLower(parsed.Host)
+	hostname := strings.ToLower(parsed.Hostname())
+	for _, allowed := range allowedHosts {
+		if labelHostMatches(host, hostname, allowed) {
+			return true
+		}
+	}
+	return false
+}
+
+func labelHostMatches(host, hostname, allowed string) bool {
+	if strings.HasPrefix(allowed, ".") {
+		return strings.HasSuffix(hostname, allowed)
+	}
+	return host == allowed
+}
+
 func labelSchemeAllowed(parsed *url.URL) bool {
-	if parsed.Scheme == "https" {
+	if parsed.Scheme == schemeHTTPS {
 		return true
 	}
-	if parsed.Scheme != "http" {
+	if parsed.Scheme != schemeHTTP {
 		return false
 	}
 	address := net.ParseIP(parsed.Hostname())

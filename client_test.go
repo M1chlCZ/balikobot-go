@@ -1,3 +1,4 @@
+//nolint:testpackage // White-box tests exercise unexported validLabelURL, readResponseBody and client fields.
 package balikobot
 
 import (
@@ -47,10 +48,6 @@ func newTestClientWithConfig(
 	}
 	t.Cleanup(client.Close)
 	return client
-}
-
-func boolPointer(value bool) *bool {
-	return &value
 }
 
 func TestClientUsesInjectedHTTPClient(t *testing.T) {

@@ -1,3 +1,4 @@
+//nolint:testpackage // White-box tests exercise unexported wire types and normalization helpers.
 package balikobot
 
 import (
@@ -657,7 +658,7 @@ func newAccountFixture(t *testing.T, liveAccount bool) (*Client, *accountFixture
 		User:        "api-user",
 		APIKey:      "provider-secret",
 		HTTPClient:  server.Client(),
-		LiveAccount: boolPointer(liveAccount),
+		LiveAccount: new(liveAccount),
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)

@@ -1,3 +1,4 @@
+//nolint:testpackage // White-box tests exercise unexported validateAddPackage and validLabelURL.
 package balikobot
 
 import (
@@ -39,8 +40,8 @@ func validTestAddRequest() AddPackageRequest {
 }
 
 func retryHint(err error) time.Duration {
-	var transient *TransientError
-	if errors.As(err, &transient) {
+	transient, ok := errors.AsType[*TransientError](err)
+	if ok {
 		return transient.RetryAfter
 	}
 	return 0

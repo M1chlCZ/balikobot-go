@@ -1,22 +1,28 @@
-package country
+package country_test
 
 import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/m1chlcz/balikobot-go/country"
 )
 
 func TestConstantsUseWireValues(t *testing.T) {
 	t.Parallel()
 
-	codes := map[Code]string{
-		AT: "AT", BE: "BE", BG: "BG", HR: "HR", CY: "CY", CZ: "CZ",
-		DK: "DK", EE: "EE", FI: "FI", FR: "FR", DE: "DE", GR: "GR",
-		HU: "HU", IE: "IE", IT: "IT", LV: "LV", LT: "LT", LU: "LU",
-		MT: "MT", NL: "NL", PL: "PL", PT: "PT", RO: "RO", SK: "SK",
-		SI: "SI", ES: "ES", SE: "SE", GB: "GB", CH: "CH", NO: "NO",
-		IS: "IS", LI: "LI", UA: "UA", RS: "RS", BA: "BA", ME: "ME",
-		MK: "MK", AL: "AL", TR: "TR", US: "US", CA: "CA",
+	codes := map[country.Code]string{
+		country.AT: "AT", country.BE: "BE", country.BG: "BG", country.HR: "HR",
+		country.CY: "CY", country.CZ: "CZ", country.DK: "DK", country.EE: "EE",
+		country.FI: "FI", country.FR: "FR", country.DE: "DE", country.GR: "GR",
+		country.HU: "HU", country.IE: "IE", country.IT: "IT", country.LV: "LV",
+		country.LT: "LT", country.LU: "LU", country.MT: "MT", country.NL: "NL",
+		country.PL: "PL", country.PT: "PT", country.RO: "RO", country.SK: "SK",
+		country.SI: "SI", country.ES: "ES", country.SE: "SE", country.GB: "GB",
+		country.CH: "CH", country.NO: "NO", country.IS: "IS", country.LI: "LI",
+		country.UA: "UA", country.RS: "RS", country.BA: "BA", country.ME: "ME",
+		country.MK: "MK", country.AL: "AL", country.TR: "TR", country.US: "US",
+		country.CA: "CA",
 	}
 	if len(codes) != 41 {
 		t.Fatalf("constant count = %d, want 41", len(codes))
@@ -37,19 +43,19 @@ func TestConstantsUseWireValues(t *testing.T) {
 func TestFromStringNormalizesAndAcceptsCustomCodes(t *testing.T) {
 	t.Parallel()
 
-	cases := map[string]Code{
-		"CZ":     CZ,
-		"  cz\t": CZ,
-		"sk":     SK,
+	cases := map[string]country.Code{
+		"CZ":     country.CZ,
+		"  cz\t": country.CZ,
+		"sk":     country.SK,
 		"xk":     "XK",
 		"zz":     "ZZ",
-		" gb ":   GB,
-		"de":     DE,
+		" gb ":   country.GB,
+		"de":     country.DE,
 	}
 	for input, want := range cases {
-		got, err := FromString(input)
-		if err != nil || got != want {
-			t.Errorf("FromString(%q) = %q, %v; want %q", input, got, err, want)
+		got, fromErr := country.FromString(input)
+		if fromErr != nil || got != want {
+			t.Errorf("FromString(%q) = %q, %v; want %q", input, got, fromErr, want)
 		}
 	}
 }
@@ -58,15 +64,15 @@ func TestFromStringRejectsMalformedCodes(t *testing.T) {
 	t.Parallel()
 
 	for _, input := range []string{"", "C", "CZE", "C2", "12", "čr", "C Z", "c z"} {
-		code, err := FromString(input)
-		if err == nil {
+		code, fromErr := country.FromString(input)
+		if fromErr == nil {
 			t.Errorf("FromString(%q) accepted %q", input, code)
 		}
-		if code != Code("") {
+		if code != country.Code("") {
 			t.Errorf("FromString(%q) code = %q, want empty", input, code)
 		}
-		if !strings.Contains(err.Error(), "country") {
-			t.Errorf("FromString(%q) error = %v, want country context", input, err)
+		if !strings.Contains(fromErr.Error(), "country") {
+			t.Errorf("FromString(%q) error = %v, want country context", input, fromErr)
 		}
 	}
 }
@@ -74,16 +80,16 @@ func TestFromStringRejectsMalformedCodes(t *testing.T) {
 func TestValidRejectsNonCanonicalValues(t *testing.T) {
 	t.Parallel()
 
-	if !CZ.Valid() || !Code("XK").Valid() || !Code("ZZ").Valid() {
+	if !country.CZ.Valid() || !country.Code("XK").Valid() || !country.Code("ZZ").Valid() {
 		t.Error("well-formed codes reported as invalid")
 	}
-	for _, code := range []Code{"", "cz", "CZ ", " CZ", "CZE", "C2", "12"} {
+	for _, code := range []country.Code{"", "cz", "CZ ", " CZ", "CZE", "C2", "12"} {
 		if code.Valid() {
 			t.Errorf("Code(%q).Valid() = true", code)
 		}
 	}
-	if CZ.String() != "CZ" {
-		t.Errorf("CZ.String() = %q", CZ.String())
+	if country.CZ.String() != "CZ" {
+		t.Errorf("CZ.String() = %q", country.CZ.String())
 	}
 }
 
@@ -91,9 +97,9 @@ func TestJSONRoundTripUsesPlainStrings(t *testing.T) {
 	t.Parallel()
 
 	type record struct {
-		Country Code `json:"country"`
+		Country country.Code `json:"country"`
 	}
-	custom, err := FromString("xk")
+	custom, err := country.FromString("xk")
 	if err != nil {
 		t.Fatalf("FromString: %v", err)
 	}
@@ -104,15 +110,15 @@ func TestJSONRoundTripUsesPlainStrings(t *testing.T) {
 	if string(encoded) != `{"country":"XK"}` {
 		t.Fatalf("encoded = %s", encoded)
 	}
-	encoded, err = json.Marshal(record{Country: US})
+	encoded, err = json.Marshal(record{Country: country.US})
 	if err != nil || string(encoded) != `{"country":"US"}` {
 		t.Fatalf("constant encoded = %s, %v", encoded, err)
 	}
 	var decoded record
-	if err := json.Unmarshal([]byte(`{"country":"DE"}`), &decoded); err != nil {
-		t.Fatalf("Unmarshal: %v", err)
+	if unmarshalErr := json.Unmarshal([]byte(`{"country":"DE"}`), &decoded); unmarshalErr != nil {
+		t.Fatalf("Unmarshal: %v", unmarshalErr)
 	}
-	if decoded.Country != DE {
+	if decoded.Country != country.DE {
 		t.Fatalf("decoded = %q", decoded.Country)
 	}
 }

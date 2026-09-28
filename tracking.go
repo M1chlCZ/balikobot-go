@@ -31,7 +31,7 @@ type trackStatusID struct {
 // UnmarshalJSON keeps the raw provider status code and rejects every shape
 // that is not a documented decimal status.
 func (id *trackStatusID) UnmarshalJSON(raw []byte) error {
-	if jsonRawKind(raw) != '0' || !trackIDPattern.MatchString(string(raw)) {
+	if jsonRawKind(raw) != '0' || !trackIDPattern.Match(raw) {
 		return errors.New("invalid Balíkobot track status id")
 	}
 	id.raw = string(raw)

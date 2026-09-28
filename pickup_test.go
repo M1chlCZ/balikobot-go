@@ -1,3 +1,4 @@
+//nolint:testpackage // Tests share the in-package HTTP fixture helpers.
 package balikobot
 
 import (

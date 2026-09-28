@@ -28,6 +28,9 @@ import (
 	"time"
 
 	balikobot "github.com/m1chlcz/balikobot-go"
+	"github.com/m1chlcz/balikobot-go/carrier"
+	"github.com/m1chlcz/balikobot-go/country"
+	"github.com/m1chlcz/balikobot-go/currency"
 )
 
 func main() {
@@ -44,39 +47,78 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	result, err := client.AddPackage(ctx, "ppl", balikobot.AddPackageRequest{
+	result, err := client.AddPackage(ctx, carrier.PPL, balikobot.AddPackageRequest{
 		EID:         "order-2026-000123-S1",
 		ServiceType: "1",
 		RecName:     "Example Recipient",
 		RecStreet:   "Example 1",
 		RecCity:     "Praha",
 		RecZip:      "11000",
-		RecCountry:  "CZ",
+		RecCountry:  country.CZ,
 		RecPhone:    "+420777000000",
 		WeightKG:    1.5,
 		LengthCM:    30,
 		WidthCM:     20,
 		HeightCM:    10,
 		Price:       1000,
-		CODCurrency: "CZK",
+		CODCurrency: currency.CZK,
 	})
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	labelURL, err := client.Labels(ctx, "ppl", result.PackageID)
+	labelURL, err := client.Labels(ctx, carrier.PPL, result.PackageID)
 	if err != nil {
 		log.Fatal(err)
 	}
 	log.Print(labelURL)
 
-	status, err := client.TrackStatus(ctx, "ppl", result.CarrierID)
+	status, err := client.TrackStatus(ctx, carrier.PPL, result.CarrierID)
 	if err != nil {
 		log.Fatal(err)
 	}
 	log.Print(status.StatusText)
 }
 ```
+
+## Enums
+
+Carrier, currency and country values are typed, not plain strings. Three
+subpackages hold the types:
+
+| Package | Type | Format | Common constants |
+| --- | --- | --- | --- |
+| `carrier` | `carrier.Code` | `^[a-z0-9]{2,32}$` | `PPL`, `DPD`, `DPDCZ`, `DPDSK`, `GEIS`, `GLS`, `INTIME`, `CP`, `CESKAPOSTA`, `BALIKOVNA`, `ZASILKOVNA`, `SP`, `ULOZENKA` |
+| `currency` | `currency.Code` | ISO 4217 `^[A-Z]{3}$` | `CZK`, `EUR`, `USD`, `GBP`, `PLN`, `HUF`, `RON`, `BGN`, `HRK`, `CHF`, `NOK`, `SEK`, `DKK` |
+| `country` | `country.Code` | ISO 3166-1 alpha-2 `^[A-Z]{2}$` | EU member states plus `GB`, `CH`, `NO`, `IS`, `LI`, `UA`, `RS`, `BA`, `ME`, `MK`, `AL`, `TR`, `US`, `CA` |
+
+Every type has a `Valid` and a `String` method. Use `FromString` for a value
+that has no constant. The function trims whitespace, normalizes the case and
+accepts any well-formed code, so custom carriers, currencies and countries
+work:
+
+```go
+custom, err := carrier.FromString("MyCarrier99")
+if err != nil {
+	return err
+}
+result, err := client.AddPackage(ctx, custom, request)
+```
+
+The types keep the wire values compile-time safe: a function that expects a
+`carrier.Code` rejects a bare string, and a mistyped constant fails the build.
+The JSON form stays a plain string, so the wire contract does not change.
+
+ADD still accepts only `currency.CZK` and `currency.EUR` as `cod_currency`,
+because the carriers require one of those two values. Other well-formed
+currency codes are rejected before the request.
+
+### Version 0.2.0
+
+Version 0.2.0 changes every carrier, currency and country parameter from
+`string` to the typed codes. This is a breaking change from v0.1.0. Update
+every call to use the new types, for example
+`client.Labels(ctx, carrier.PPL, packageID)`.
 
 ## Methods
 

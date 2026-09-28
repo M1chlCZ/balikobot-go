@@ -12,6 +12,10 @@ import (
 	"testing"
 	"testing/synctest"
 	"time"
+
+	"github.com/m1chlcz/balikobot-go/carrier"
+	"github.com/m1chlcz/balikobot-go/country"
+	"github.com/m1chlcz/balikobot-go/currency"
 )
 
 func validTestAddRequest() AddPackageRequest {
@@ -22,7 +26,7 @@ func validTestAddRequest() AddPackageRequest {
 		RecStreet:   "Psí 1",
 		RecCity:     "Praha",
 		RecZip:      "11000",
-		RecCountry:  "CZ",
+		RecCountry:  country.CZ,
 		RecPhone:    "+420777000000",
 		RecEmail:    "recipient@example.test",
 		WeightKG:    1.25,
@@ -30,7 +34,7 @@ func validTestAddRequest() AddPackageRequest {
 		WidthCM:     20,
 		HeightCM:    10,
 		Price:       1990,
-		CODCurrency: "CZK",
+		CODCurrency: currency.CZK,
 	}
 }
 
@@ -95,7 +99,7 @@ func TestAddPackageUsesOfficialV2Contract(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	client := newTestClient(t, server)
-	result, err := client.AddPackage(context.Background(), "ppl", validTestAddRequest())
+	result, err := client.AddPackage(context.Background(), carrier.PPL, validTestAddRequest())
 	if err != nil {
 		t.Fatalf("AddPackage: %v", err)
 	}
@@ -125,7 +129,7 @@ func TestAddPackageDuplicateEIDReturnsOriginalRecord(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	client := newTestClient(t, server)
-	result, err := client.AddPackage(context.Background(), "ppl", validTestAddRequest())
+	result, err := client.AddPackage(context.Background(), carrier.PPL, validTestAddRequest())
 	if err != nil {
 		t.Fatalf("AddPackage duplicate: %v", err)
 	}
@@ -155,7 +159,7 @@ func TestAddPackageDuplicateEIDTopLevelReplayIsSuccess(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	client := newTestClient(t, server)
-	result, err := client.AddPackage(context.Background(), "zasilkovna", validTestAddRequest())
+	result, err := client.AddPackage(context.Background(), carrier.ZASILKOVNA, validTestAddRequest())
 	if err != nil {
 		t.Fatalf("AddPackage top-level 208 replay: %v", err)
 	}
@@ -172,15 +176,15 @@ func TestAddRequiresDestinationCurrencyOnEveryShipment(t *testing.T) {
 	if !errors.Is(validateAddPackage(request), ErrInvalidRequest) {
 		t.Fatal("ADD without cod_currency accepted")
 	}
-	for _, currency := range []string{"CZK", "EUR"} {
+	for _, currencyCode := range []currency.Code{currency.CZK, currency.EUR} {
 		request = validTestAddRequest()
-		request.CODCurrency = currency
+		request.CODCurrency = currencyCode
 		if err := validateAddPackage(request); err != nil {
-			t.Fatalf("cod_currency %s rejected: %v", currency, err)
+			t.Fatalf("cod_currency %s rejected: %v", currencyCode, err)
 		}
 	}
 	request = validTestAddRequest()
-	request.CODCurrency = "USD"
+	request.CODCurrency = currency.USD
 	if !errors.Is(validateAddPackage(request), ErrInvalidRequest) {
 		t.Fatal("unsupported cod_currency accepted")
 	}
@@ -301,7 +305,7 @@ func TestAddPackageClassifiesResponses(t *testing.T) {
 			}))
 			t.Cleanup(server.Close)
 			client := newTestClient(t, server)
-			_, err := client.AddPackage(context.Background(), "ppl", validTestAddRequest())
+			_, err := client.AddPackage(context.Background(), carrier.PPL, validTestAddRequest())
 			if !errors.Is(err, testCase.want) {
 				t.Fatalf("AddPackage error = %v, want %v", err, testCase.want)
 			}
@@ -346,7 +350,7 @@ func TestAddPackageMalformed2xxIsAmbiguous(t *testing.T) {
 			))
 			t.Cleanup(server.Close)
 			client := newTestClient(t, server)
-			_, err := client.AddPackage(context.Background(), "ppl", validTestAddRequest())
+			_, err := client.AddPackage(context.Background(), carrier.PPL, validTestAddRequest())
 			if !errors.Is(err, ErrAmbiguous) {
 				t.Fatalf("AddPackage error = %v, want ambiguous", err)
 			}
@@ -366,7 +370,7 @@ func TestAddPackageTimeoutAfterRequestIsAmbiguous(t *testing.T) {
 		client := newTestClientWithConfig(t, server, func(config *Config) {
 			config.Timeout = 50 * time.Millisecond
 		})
-		_, err := client.AddPackage(t.Context(), "ppl", validTestAddRequest())
+		_, err := client.AddPackage(t.Context(), carrier.PPL, validTestAddRequest())
 		if !errors.Is(err, ErrAmbiguous) {
 			t.Fatalf("timeout error = %v, want ErrAmbiguous", err)
 		}
@@ -385,7 +389,7 @@ func TestAddPackageRefusedConnectionIsRetryable(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 	t.Cleanup(client.Close)
-	_, err = client.AddPackage(context.Background(), "ppl", validTestAddRequest())
+	_, err = client.AddPackage(context.Background(), carrier.PPL, validTestAddRequest())
 	if !errors.Is(err, ErrUnavailable) || errors.Is(err, ErrAmbiguous) {
 		t.Fatalf("refused connection error = %v, want ErrUnavailable", err)
 	}
@@ -402,11 +406,11 @@ func TestAddPackageValidatesBeforeNetwork(t *testing.T) {
 	client := newTestClient(t, server)
 	request := validTestAddRequest()
 	request.EID = "not a valid eid!"
-	if _, err := client.AddPackage(context.Background(), "ppl", request); !errors.Is(err, ErrInvalidRequest) {
+	if _, err := client.AddPackage(context.Background(), carrier.PPL, request); !errors.Is(err, ErrInvalidRequest) {
 		t.Fatalf("invalid request error = %v", err)
 	}
 	if _, err := client.AddPackage(
-		context.Background(), "PPL", validTestAddRequest(),
+		context.Background(), carrier.Code("PPL"), validTestAddRequest(),
 	); !errors.Is(err, ErrInvalidRequest) {
 		t.Fatalf("invalid carrier error = %v", err)
 	}
@@ -435,7 +439,7 @@ func TestOverviewMatchesExternalReference(t *testing.T) {
 	t.Cleanup(server.Close)
 	client := newTestClient(t, server)
 	packages, err := client.Overview(
-		context.Background(), "ppl", "018f00000000400080000000000000aa-S1",
+		context.Background(), carrier.PPL, "018f00000000400080000000000000aa-S1",
 	)
 	if err != nil {
 		t.Fatalf("Overview: %v", err)
@@ -456,7 +460,7 @@ func TestOverviewClassifiesOutages(t *testing.T) {
 	t.Cleanup(server.Close)
 	client := newTestClient(t, server)
 	if _, err := client.Overview(
-		context.Background(), "ppl", "018f00000000400080000000000000aa-S1",
+		context.Background(), carrier.PPL, "018f00000000400080000000000000aa-S1",
 	); !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("overview outage error = %v", err)
 	}
@@ -486,7 +490,7 @@ func TestLabelsUsesOfficialV2Contract(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	client := newTestClient(t, server)
-	labelURL, err := client.Labels(context.Background(), "ppl", "add-ppl-1")
+	labelURL, err := client.Labels(context.Background(), carrier.PPL, "add-ppl-1")
 	if err != nil {
 		t.Fatalf("Labels: %v", err)
 	}
@@ -515,7 +519,7 @@ func TestOrderViewLabelsUsesOfficialV2Contract(t *testing.T) {
 
 	client := newTestClient(t, server)
 	labelURL, err := client.OrderViewLabels(
-		context.Background(), "ppl", "order-ppl-1", "add-ppl-1",
+		context.Background(), carrier.PPL, "order-ppl-1", "add-ppl-1",
 	)
 	if err != nil {
 		t.Fatalf("OrderViewLabels: %v", err)
@@ -604,10 +608,10 @@ func TestLabelLookupValidatesResponses(t *testing.T) {
 			var err error
 			if test.orderView {
 				_, err = client.OrderViewLabels(
-					context.Background(), "ppl", "order-ppl-1", "add-ppl-1",
+					context.Background(), carrier.PPL, "order-ppl-1", "add-ppl-1",
 				)
 			} else {
-				_, err = client.Labels(context.Background(), "ppl", "add-ppl-1")
+				_, err = client.Labels(context.Background(), carrier.PPL, "add-ppl-1")
 			}
 			if !errors.Is(err, test.want) {
 				t.Fatalf("error = %v, want %v", err, test.want)
@@ -672,22 +676,26 @@ func TestResolveBranchIDDerivation(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
-		carrier, service, id, zip, want string
+		carrierCode carrier.Code
+		service, id string
+		zip, want   string
 	}{
-		{carrier: "ppl", id: "KM123", want: "123"},
-		{carrier: "ppl", id: "456", want: "456"},
-		{carrier: "cp", zip: "130 00", want: "13000"},
-		{carrier: "sp", zip: "811 01", want: "81101"},
-		{carrier: "ulozenka", service: "CP_NP", id: "x", zip: "130 00", want: "13000"},
-		{carrier: "ulozenka", service: "OTHER", id: "x", zip: "130 00", want: "x"},
-		{carrier: "intime", id: "42", want: "42"},
-		{carrier: "zasilkovna", id: "123", want: "123"},
-		{carrier: "dpd", id: "99", want: "99"},
+		{carrierCode: carrier.PPL, id: "KM123", want: "123"},
+		{carrierCode: carrier.PPL, id: "456", want: "456"},
+		{carrierCode: carrier.CP, zip: "130 00", want: "13000"},
+		{carrierCode: carrier.SP, zip: "811 01", want: "81101"},
+		{carrierCode: carrier.ULOZENKA, service: "CP_NP", id: "x", zip: "130 00", want: "13000"},
+		{carrierCode: carrier.ULOZENKA, service: "OTHER", id: "x", zip: "130 00", want: "x"},
+		{carrierCode: carrier.INTIME, id: "42", want: "42"},
+		{carrierCode: carrier.ZASILKOVNA, id: "123", want: "123"},
+		{carrierCode: carrier.DPD, id: "99", want: "99"},
 	}
 	for _, testCase := range cases {
-		if got := ResolveBranchID(testCase.carrier, testCase.service, testCase.id, testCase.zip); got != testCase.want {
+		if got := ResolveBranchID(
+			testCase.carrierCode, testCase.service, testCase.id, testCase.zip,
+		); got != testCase.want {
 			t.Fatalf("ResolveBranchID(%q, %q, %q, %q) = %q, want %q",
-				testCase.carrier, testCase.service, testCase.id, testCase.zip, got, testCase.want)
+				testCase.carrierCode, testCase.service, testCase.id, testCase.zip, got, testCase.want)
 		}
 	}
 }
@@ -712,7 +720,7 @@ func TestAddPackageAcceptsDocumentedZPLQueryLabelURL(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	client := newTestClient(t, server)
-	result, err := client.AddPackage(context.Background(), "cp", validTestAddRequest())
+	result, err := client.AddPackage(context.Background(), carrier.CP, validTestAddRequest())
 	if err != nil {
 		t.Fatalf("AddPackage with documented zpl label URL: %v", err)
 	}
@@ -744,7 +752,7 @@ func TestRetryAfterHeaderClampsBeyondCap(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	client := newTestClient(t, server)
-	_, err := client.AddPackage(context.Background(), "ppl", validTestAddRequest())
+	_, err := client.AddPackage(context.Background(), carrier.PPL, validTestAddRequest())
 	if !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("error = %v", err)
 	}
@@ -770,7 +778,7 @@ func TestOverviewSkipsUnrelatedMalformedEntries(t *testing.T) {
 	t.Cleanup(server.Close)
 	client := newTestClient(t, server)
 	packages, err := client.Overview(
-		context.Background(), "ppl", "018f00000000400080000000000000aa-S1",
+		context.Background(), carrier.PPL, "018f00000000400080000000000000aa-S1",
 	)
 	if err != nil {
 		t.Fatalf("Overview: %v", err)
@@ -795,7 +803,7 @@ func TestOverviewFailsOnMalformedReconciledEntry(t *testing.T) {
 	t.Cleanup(server.Close)
 	client := newTestClient(t, server)
 	if _, err := client.Overview(
-		context.Background(), "ppl", "018f00000000400080000000000000aa-S1",
+		context.Background(), carrier.PPL, "018f00000000400080000000000000aa-S1",
 	); !errors.Is(err, ErrInvalidResponse) {
 		t.Fatalf("overview malformed reconciled entry error = %v", err)
 	}
@@ -850,7 +858,7 @@ func TestOverviewClassifiesTopLevelStatus(t *testing.T) {
 			t.Cleanup(server.Close)
 			client := newTestClient(t, server)
 			if _, err := client.Overview(
-				context.Background(), "ppl",
+				context.Background(), carrier.PPL,
 				"018f00000000400080000000000000aa-S1",
 			); !errors.Is(err, testCase.want) {
 				t.Fatalf("Overview error = %v, want %v", err, testCase.want)
@@ -864,7 +872,7 @@ func TestCODVariableSymbolIsOptionalInteger(t *testing.T) {
 
 	for _, symbol := range []int64{0, 9999999999, -1, 10000000000} {
 		request := validTestAddRequest()
-		request.CODPrice, request.CODCurrency, request.VS = 100, "CZK", &symbol
+		request.CODPrice, request.CODCurrency, request.VS = 100, currency.CZK, &symbol
 		err := validateAddPackage(request)
 		if symbol < 0 || symbol >= trackReferenceModulus {
 			if !errors.Is(err, ErrInvalidRequest) {
@@ -895,7 +903,7 @@ func TestCODVariableSymbolIsOptionalInteger(t *testing.T) {
 	if strings.Contains(string(body), `"vs"`) {
 		t.Fatalf("non-COD contains vs: %s", body)
 	}
-	request.CODPrice, request.CODCurrency = 100, "CZK"
+	request.CODPrice, request.CODCurrency = 100, currency.CZK
 	if !errors.Is(validateAddPackage(request), ErrInvalidRequest) {
 		t.Fatal("COD without vs accepted")
 	}

@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"net/http"
+
+	"github.com/m1chlcz/balikobot-go/carrier"
 )
 
 // TrackStatusResult is the latest provider tracking status of one package.
@@ -67,16 +69,16 @@ type dropResponse struct {
 // The call is read-only, so transport failures are safe to retry.
 func (client *Client) TrackStatus(
 	ctx context.Context,
-	carrier string,
+	carrierCode carrier.Code,
 	carrierID string,
 ) (TrackStatusResult, error) {
 	if client == nil || client.client == nil ||
-		!carrierPattern.MatchString(carrier) ||
+		!carrierCode.Valid() ||
 		!validPackageID(carrierID) {
 		return TrackStatusResult{}, ErrInvalidRequest
 	}
 	response, err := client.request(
-		ctx, http.MethodPost, "/"+carrier+"/trackstatus",
+		ctx, http.MethodPost, "/"+string(carrierCode)+"/trackstatus",
 		map[string]any{"carrier_ids": []string{carrierID}},
 	)
 	if err != nil {
@@ -185,16 +187,16 @@ func (client *Client) decodeTrackStatus(
 // closing the package twice.
 func (client *Client) OrderBatch(
 	ctx context.Context,
-	carrier string,
+	carrierCode carrier.Code,
 	packageID string,
 ) (OrderResult, error) {
 	if client == nil || client.client == nil ||
-		!carrierPattern.MatchString(carrier) ||
+		!carrierCode.Valid() ||
 		!validPackageID(packageID) {
 		return OrderResult{}, ErrInvalidRequest
 	}
 	response, err := client.request(
-		ctx, http.MethodPost, "/"+carrier+"/order",
+		ctx, http.MethodPost, "/"+string(carrierCode)+"/order",
 		map[string]any{fieldPackageIDs: []string{packageID}},
 	)
 	if err != nil {
@@ -251,16 +253,16 @@ func (client *Client) OrderBatch(
 // through Overview before any retry.
 func (client *Client) DropPackage(
 	ctx context.Context,
-	carrier string,
+	carrierCode carrier.Code,
 	packageID string,
 ) error {
 	if client == nil || client.client == nil ||
-		!carrierPattern.MatchString(carrier) ||
+		!carrierCode.Valid() ||
 		!validPackageID(packageID) {
 		return ErrInvalidRequest
 	}
 	response, err := client.request(
-		ctx, http.MethodPost, "/"+carrier+"/drop",
+		ctx, http.MethodPost, "/"+string(carrierCode)+"/drop",
 		map[string]any{fieldPackageIDs: []string{packageID}},
 	)
 	if err != nil {

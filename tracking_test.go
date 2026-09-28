@@ -10,6 +10,8 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/m1chlcz/balikobot-go/carrier"
 )
 
 func TestTrackStatusUsesOfficialV2Contract(t *testing.T) {
@@ -43,7 +45,7 @@ func TestTrackStatusUsesOfficialV2Contract(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	client := newTestClient(t, server)
-	result, err := client.TrackStatus(context.Background(), "ppl", "TRACK-1")
+	result, err := client.TrackStatus(context.Background(), carrier.PPL, "TRACK-1")
 	if err != nil {
 		t.Fatalf("TrackStatus: %v", err)
 	}
@@ -186,7 +188,7 @@ func TestTrackStatusClassifiesResponses(t *testing.T) {
 			}))
 			t.Cleanup(server.Close)
 			client := newTestClient(t, server)
-			result, err := client.TrackStatus(context.Background(), "ppl", "TRACK-1")
+			result, err := client.TrackStatus(context.Background(), carrier.PPL, "TRACK-1")
 			if !errors.Is(err, testCase.want) {
 				t.Fatalf("TrackStatus = %#v, %v; want %v", result, err, testCase.want)
 			}
@@ -225,7 +227,7 @@ func TestOrderBatchUsesOfficialV2Contract(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	client := newTestClient(t, server)
-	result, err := client.OrderBatch(context.Background(), "ppl", "add-ppl-1")
+	result, err := client.OrderBatch(context.Background(), carrier.PPL, "add-ppl-1")
 	if err != nil {
 		t.Fatalf("OrderBatch: %v", err)
 	}
@@ -292,7 +294,7 @@ func TestOrderBatchClassifiesResponses(t *testing.T) {
 			}))
 			t.Cleanup(server.Close)
 			client := newTestClient(t, server)
-			result, err := client.OrderBatch(context.Background(), "ppl", "add-ppl-1")
+			result, err := client.OrderBatch(context.Background(), carrier.PPL, "add-ppl-1")
 			if !errors.Is(err, testCase.want) {
 				t.Fatalf("OrderBatch = %#v, %v; want %v", result, err, testCase.want)
 			}
@@ -333,12 +335,12 @@ func TestMutatingCallsTreatNonJSONSuccessAsAmbiguous(t *testing.T) {
 			client := newTestClient(t, server)
 
 			if _, err := client.OrderBatch(
-				context.Background(), "ppl", "add-ppl-1",
+				context.Background(), carrier.PPL, "add-ppl-1",
 			); !errors.Is(err, ErrAmbiguous) {
 				t.Errorf("OrderBatch = %v, want ErrAmbiguous", err)
 			}
 			if err := client.DropPackage(
-				context.Background(), "ppl", "add-ppl-1",
+				context.Background(), carrier.PPL, "add-ppl-1",
 			); !errors.Is(err, ErrAmbiguous) {
 				t.Errorf("DropPackage = %v, want ErrAmbiguous", err)
 			}
@@ -365,7 +367,7 @@ func TestDropPackageUsesOfficialV2Contract(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	client := newTestClient(t, server)
-	if err := client.DropPackage(context.Background(), "ppl", "add-ppl-1"); err != nil {
+	if err := client.DropPackage(context.Background(), carrier.PPL, "add-ppl-1"); err != nil {
 		t.Fatalf("DropPackage: %v", err)
 	}
 }
@@ -419,7 +421,7 @@ func TestDropPackageClassifiesResponses(t *testing.T) {
 			}))
 			t.Cleanup(server.Close)
 			client := newTestClient(t, server)
-			err := client.DropPackage(context.Background(), "ppl", "add-ppl-1")
+			err := client.DropPackage(context.Background(), carrier.PPL, "add-ppl-1")
 			if !errors.Is(err, testCase.want) {
 				t.Fatalf("DropPackage = %v, want %v", err, testCase.want)
 			}
@@ -439,18 +441,18 @@ func TestTrackStatusRejectsInvalidInput(t *testing.T) {
 	t.Cleanup(client.Close)
 	for _, carrierID := range []string{"", "bad\nid", " " + string(make([]byte, 200))} {
 		if _, trackErr := client.TrackStatus(
-			context.Background(), "ppl", carrierID,
+			context.Background(), carrier.PPL, carrierID,
 		); !errors.Is(trackErr, ErrInvalidRequest) {
 			t.Fatalf("TrackStatus(%q) = %v, want ErrInvalidRequest", carrierID, trackErr)
 		}
 	}
 	if _, orderErr := client.OrderBatch(
-		context.Background(), "ppl", "",
+		context.Background(), carrier.PPL, "",
 	); !errors.Is(orderErr, ErrInvalidRequest) {
 		t.Fatalf("OrderBatch empty id = %v, want ErrInvalidRequest", orderErr)
 	}
 	if dropErr := client.DropPackage(
-		context.Background(), "ppl", "bad\x00id",
+		context.Background(), carrier.PPL, "bad\x00id",
 	); !errors.Is(dropErr, ErrInvalidRequest) {
 		t.Fatalf("DropPackage invalid id = %v, want ErrInvalidRequest", dropErr)
 	}

@@ -6,6 +6,8 @@ import (
 	"math"
 	"net/http"
 	"time"
+
+	"github.com/m1chlcz/balikobot-go/carrier"
 )
 
 // PickupRequest is one physical collection booking for ORDERPICKUP.
@@ -49,17 +51,18 @@ type pickupResponse struct {
 // that configuration.
 func (client *Client) OrderPickup(
 	ctx context.Context,
-	carrier string,
+	carrierCode carrier.Code,
 	request PickupRequest,
 ) (PickupResult, error) {
 	if client == nil || client.client == nil {
 		return PickupResult{}, ErrInvalidRequest
 	}
-	if !validPickupRequest(carrier, request) {
+	if !validPickupRequest(carrierCode, request) {
 		return PickupResult{}, ErrRejected
 	}
 	response, err := client.request(
-		ctx, http.MethodPost, "/"+carrier+"/orderpickup", pickupBody(carrier, request),
+		ctx, http.MethodPost, "/"+string(carrierCode)+"/orderpickup",
+		pickupBody(carrierCode, request),
 	)
 	if err != nil {
 		if errors.Is(err, errAccountUnverified) {
@@ -81,7 +84,7 @@ func (client *Client) OrderPickup(
 	if result.Status.value != http.StatusOK {
 		return PickupResult{}, pickupStatusError(result.Status.value)
 	}
-	if carrier != CarrierPPL {
+	if carrierCode != carrier.PPL {
 		return PickupResult{Confirmed: true}, nil
 	}
 	if result.Confirmed == nil || result.ProviderID == "" ||
@@ -91,8 +94,9 @@ func (client *Client) OrderPickup(
 	return PickupResult{ProviderID: result.ProviderID, Confirmed: *result.Confirmed}, nil
 }
 
-func validPickupRequest(carrier string, request PickupRequest) bool {
-	if carrier != CarrierDPDCZ && carrier != CarrierDPD && carrier != CarrierPPL {
+func validPickupRequest(carrierCode carrier.Code, request PickupRequest) bool {
+	if carrierCode != carrier.DPDCZ && carrierCode != carrier.DPD &&
+		carrierCode != carrier.PPL {
 		return false
 	}
 	date, err := time.Parse(time.DateOnly, request.Date)
@@ -105,10 +109,10 @@ func validPickupRequest(carrier string, request PickupRequest) bool {
 		validBranchField(request.Note, pickupNoteLimit)
 }
 
-func pickupBody(carrier string, request PickupRequest) map[string]any {
+func pickupBody(carrierCode carrier.Code, request PickupRequest) map[string]any {
 	body := map[string]any{"date": request.Date}
 	noteField := "note"
-	if carrier != CarrierPPL {
+	if carrierCode != carrier.PPL {
 		body["weight"] = request.WeightKG
 		body["package_count"] = request.PackageCount
 		noteField = "message"

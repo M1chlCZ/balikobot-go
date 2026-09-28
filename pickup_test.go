@@ -14,6 +14,8 @@ import (
 	"testing"
 	"testing/synctest"
 	"time"
+
+	"github.com/m1chlcz/balikobot-go/carrier"
 )
 
 func validTestPickupRequest() PickupRequest {
@@ -25,12 +27,12 @@ func validTestPickupRequest() PickupRequest {
 func TestOrderPickupDPDContract(t *testing.T) {
 	t.Parallel()
 
-	for _, carrier := range []string{CarrierDPDCZ, CarrierDPD} {
-		t.Run(carrier, func(t *testing.T) {
+	for _, carrierCode := range []carrier.Code{carrier.DPDCZ, carrier.DPD} {
+		t.Run(carrierCode.String(), func(t *testing.T) {
 			t.Parallel()
 			server := httptest.NewServer(
 				http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-					assertPickupRequest(t, request, carrier)
+					assertPickupRequest(t, request, carrierCode)
 					var body map[string]any
 					if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
 						t.Errorf("decode request: %v", err)
@@ -46,7 +48,7 @@ func TestOrderPickupDPDContract(t *testing.T) {
 			)
 			t.Cleanup(server.Close)
 			client := newTestClient(t, server)
-			result, err := client.OrderPickup(t.Context(), carrier, validTestPickupRequest())
+			result, err := client.OrderPickup(t.Context(), carrierCode, validTestPickupRequest())
 			if err != nil || !result.Confirmed || result.ProviderID != "" {
 				t.Fatalf("OrderPickup = %#v, %v", result, err)
 			}
@@ -62,7 +64,7 @@ func TestOrderPickupPPLContractPreservesConfirmation(t *testing.T) {
 			t.Parallel()
 			server := httptest.NewServer(
 				http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-					assertPickupRequest(t, request, CarrierPPL)
+					assertPickupRequest(t, request, carrier.PPL)
 					var body map[string]any
 					if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
 						t.Errorf("decode request: %v", err)
@@ -80,7 +82,7 @@ func TestOrderPickupPPLContractPreservesConfirmation(t *testing.T) {
 			)
 			t.Cleanup(server.Close)
 			client := newTestClient(t, server)
-			result, err := client.OrderPickup(t.Context(), CarrierPPL, validTestPickupRequest())
+			result, err := client.OrderPickup(t.Context(), carrier.PPL, validTestPickupRequest())
 			if err != nil || result.Confirmed != confirmed || result.ProviderID != "BB12345600152024001" {
 				t.Fatalf("OrderPickup = %#v, %v", result, err)
 			}
@@ -88,9 +90,9 @@ func TestOrderPickupPPLContractPreservesConfirmation(t *testing.T) {
 	}
 }
 
-func assertPickupRequest(t *testing.T, request *http.Request, carrier string) {
+func assertPickupRequest(t *testing.T, request *http.Request, carrierCode carrier.Code) {
 	t.Helper()
-	if request.Method != http.MethodPost || request.URL.Path != "/"+carrier+"/orderpickup" {
+	if request.Method != http.MethodPost || request.URL.Path != "/"+carrierCode.String()+"/orderpickup" {
 		t.Errorf("request = %s %s", request.Method, request.URL.Path)
 	}
 	wantAuth := "Basic " + base64.StdEncoding.EncodeToString([]byte("api-user:provider-secret"))
@@ -111,111 +113,111 @@ func TestOrderPickupClassifiesFailuresWithoutRetry(t *testing.T) {
 
 	cases := []struct {
 		name       string
-		carrier    string
+		carrier    carrier.Code
 		statusCode int
 		body       string
 		want       error
 	}{
-		{"http validation", CarrierDPDCZ, http.StatusBadRequest, `{"status":400}`, ErrRejected},
+		{"http validation", carrier.DPDCZ, http.StatusBadRequest, `{"status":400}`, ErrRejected},
 		{
 			"http unauthorized",
-			CarrierPPL,
+			carrier.PPL,
 			http.StatusUnauthorized,
 			`{"status":401}`,
 			ErrRejected,
 		},
 		{
 			"http rate limited",
-			CarrierPPL,
+			carrier.PPL,
 			http.StatusTooManyRequests,
 			`{"status":429}`,
 			ErrRejected,
 		},
 		{
 			"http conflict may be existing pickup",
-			CarrierDPDCZ,
+			carrier.DPDCZ,
 			http.StatusConflict,
 			`{"status":409}`,
 			ErrAmbiguous,
 		},
-		{"http timeout", CarrierDPDCZ, http.StatusRequestTimeout, `{"status":408}`, ErrAmbiguous},
+		{"http timeout", carrier.DPDCZ, http.StatusRequestTimeout, `{"status":408}`, ErrAmbiguous},
 		{
 			"http unavailable",
-			CarrierDPDCZ,
+			carrier.DPDCZ,
 			http.StatusServiceUnavailable,
 			`{"status":503}`,
 			ErrAmbiguous,
 		},
 		{
 			"http failed after success",
-			CarrierPPL,
+			carrier.PPL,
 			http.StatusInternalServerError,
 			`{"status":200}`,
 			ErrAmbiguous,
 		},
-		{"unexpected 2xx", CarrierDPDCZ, http.StatusCreated, `{"status":200}`, ErrAmbiguous},
+		{"unexpected 2xx", carrier.DPDCZ, http.StatusCreated, `{"status":200}`, ErrAmbiguous},
 		{
 			"explicit validation rejection",
-			CarrierDPDCZ,
+			carrier.DPDCZ,
 			http.StatusOK,
 			`{"status":400}`,
 			ErrRejected,
 		},
 		{
 			"undocumented payment state",
-			CarrierDPDCZ,
+			carrier.DPDCZ,
 			http.StatusOK,
 			`{"status":402}`,
 			ErrAmbiguous,
 		},
 		{
 			"undocumented acceptance state",
-			CarrierDPDCZ,
+			carrier.DPDCZ,
 			http.StatusOK,
 			`{"status":406}`,
 			ErrAmbiguous,
 		},
 		{
 			"body conflict may be existing pickup",
-			CarrierDPDCZ,
+			carrier.DPDCZ,
 			http.StatusOK,
 			`{"status":409}`,
 			ErrAmbiguous,
 		},
 		{
 			"locked may be existing pickup",
-			CarrierDPDCZ,
+			carrier.DPDCZ,
 			http.StatusOK,
 			`{"status":423}`,
 			ErrAmbiguous,
 		},
-		{"body unavailable", CarrierDPDCZ, http.StatusOK, `{"status":503}`, ErrAmbiguous},
-		{"unknown body status", CarrierDPDCZ, http.StatusOK, `{"status":418}`, ErrAmbiguous},
-		{"undocumented replay", CarrierDPDCZ, http.StatusOK, `{"status":208}`, ErrAmbiguous},
-		{"malformed success", CarrierDPDCZ, http.StatusOK, `{"status":`, ErrAmbiguous},
-		{"missing status", CarrierDPDCZ, http.StatusOK, `{}`, ErrAmbiguous},
-		{"null status", CarrierDPDCZ, http.StatusOK, `{"status":null}`, ErrAmbiguous},
+		{"body unavailable", carrier.DPDCZ, http.StatusOK, `{"status":503}`, ErrAmbiguous},
+		{"unknown body status", carrier.DPDCZ, http.StatusOK, `{"status":418}`, ErrAmbiguous},
+		{"undocumented replay", carrier.DPDCZ, http.StatusOK, `{"status":208}`, ErrAmbiguous},
+		{"malformed success", carrier.DPDCZ, http.StatusOK, `{"status":`, ErrAmbiguous},
+		{"missing status", carrier.DPDCZ, http.StatusOK, `{}`, ErrAmbiguous},
+		{"null status", carrier.DPDCZ, http.StatusOK, `{"status":null}`, ErrAmbiguous},
 		{
-			"PPL missing confirmation", CarrierPPL, http.StatusOK,
+			"PPL missing confirmation", carrier.PPL, http.StatusOK,
 			`{"status":200,"pickup_order_id":"BB123"}`, ErrAmbiguous,
 		},
 		{
-			"PPL null confirmation", CarrierPPL, http.StatusOK,
+			"PPL null confirmation", carrier.PPL, http.StatusOK,
 			`{"status":200,"pickup_order_id":"BB123","confirmed":null}`, ErrAmbiguous,
 		},
 		{
-			"PPL wrong confirmation type", CarrierPPL, http.StatusOK,
+			"PPL wrong confirmation type", carrier.PPL, http.StatusOK,
 			`{"status":200,"pickup_order_id":"BB123","confirmed":"true"}`, ErrAmbiguous,
 		},
 		{
 			"PPL missing ID",
-			CarrierPPL,
+			carrier.PPL,
 			http.StatusOK,
 			`{"status":200,"confirmed":true}`,
 			ErrAmbiguous,
 		},
 		{
-			"PPL invalid ID", CarrierPPL, http.StatusOK,
+			"PPL invalid ID", carrier.PPL, http.StatusOK,
 			`{"status":200,"pickup_order_id":"BB\n123","confirmed":true}`, ErrAmbiguous,
 		},
 	}
@@ -254,7 +256,7 @@ func TestOrderPickupUnreadableSuccessIsUnknown(t *testing.T) {
 			}))
 			t.Cleanup(server.Close)
 			client := newTestClient(t, server)
-			_, err := client.OrderPickup(t.Context(), CarrierDPDCZ, validTestPickupRequest())
+			_, err := client.OrderPickup(t.Context(), carrier.DPDCZ, validTestPickupRequest())
 			if !errors.Is(err, ErrAmbiguous) || requests.Load() != 1 {
 				t.Fatalf("OrderPickup = %v, requests=%d", err, requests.Load())
 			}
@@ -276,7 +278,7 @@ func TestOrderPickupTimeoutIsUnknownWithoutRetry(t *testing.T) {
 		client := newTestClientWithConfig(t, server, func(config *Config) {
 			config.Timeout = 50 * time.Millisecond
 		})
-		_, err := client.OrderPickup(t.Context(), CarrierDPDCZ, validTestPickupRequest())
+		_, err := client.OrderPickup(t.Context(), carrier.DPDCZ, validTestPickupRequest())
 		if !errors.Is(err, ErrAmbiguous) || requests.Load() != 1 {
 			t.Fatalf("OrderPickup = %v, requests=%d", err, requests.Load())
 		}
@@ -318,7 +320,7 @@ func TestOrderPickupValidatesBeforeNetwork(t *testing.T) {
 			client := newTestClient(t, server)
 			request := validTestPickupRequest()
 			testCase.change(&request)
-			_, err := client.OrderPickup(t.Context(), CarrierDPDCZ, request)
+			_, err := client.OrderPickup(t.Context(), carrier.DPDCZ, request)
 			if !errors.Is(err, ErrRejected) || requests.Load() != 0 {
 				t.Fatalf("OrderPickup = %v, requests=%d", err, requests.Load())
 			}
@@ -336,10 +338,13 @@ func TestOrderPickupRejectsUnsupportedCarriersBeforeNetwork(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	client := newTestClient(t, server)
-	for _, carrier := range []string{"cp", "ceskaposta", "balikovna", "gls", "intime", "dpdsk", "PPL", "../ppl"} {
-		_, err := client.OrderPickup(t.Context(), carrier, validTestPickupRequest())
+	for _, carrierCode := range []carrier.Code{
+		carrier.CP, carrier.CESKAPOSTA, carrier.BALIKOVNA, carrier.GLS,
+		carrier.INTIME, carrier.DPDSK, "PPL", "../ppl",
+	} {
+		_, err := client.OrderPickup(t.Context(), carrierCode, validTestPickupRequest())
 		if !errors.Is(err, ErrRejected) {
-			t.Errorf("carrier %q: OrderPickup = %v", carrier, err)
+			t.Errorf("carrier %q: OrderPickup = %v", carrierCode, err)
 		}
 	}
 	if requests.Load() != 0 {

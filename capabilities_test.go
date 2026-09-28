@@ -13,9 +13,13 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/m1chlcz/balikobot-go/carrier"
+	"github.com/m1chlcz/balikobot-go/country"
+	"github.com/m1chlcz/balikobot-go/currency"
 )
 
-func findCarrier(carriers []Carrier, code string) *Carrier {
+func findCarrier(carriers []Carrier, code carrier.Code) *Carrier {
 	for index := range carriers {
 		if carriers[index].CarrierCode == code {
 			return &carriers[index]
@@ -57,8 +61,8 @@ func TestWhoAmIUsesOfficialV2Contract(t *testing.T) {
 	if whoami.Status != 200 || whoami.LiveAccount == nil || !*whoami.LiveAccount {
 		t.Fatalf("whoami = %#v", whoami)
 	}
-	if len(whoami.Carriers) != 2 || whoami.Carriers[0].Slug != "ppl" ||
-		whoami.Carriers[0].Name != "PPL" || whoami.Carriers[1].Slug != "gls" {
+	if len(whoami.Carriers) != 2 || whoami.Carriers[0].Slug != carrier.PPL ||
+		whoami.Carriers[0].Name != "PPL" || whoami.Carriers[1].Slug != carrier.GLS {
 		t.Fatalf("carriers = %#v", whoami.Carriers)
 	}
 	encoded, marshalErr := json.Marshal(whoami)
@@ -86,7 +90,7 @@ func TestActivatedServicesNormalizesAndHonorsActiveParcel(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	client := newTestClient(t, server)
-	activated, err := client.ActivatedServices(context.Background(), "ppl")
+	activated, err := client.ActivatedServices(context.Background(), carrier.PPL)
 	if err != nil {
 		t.Fatalf("ActivatedServices: %v", err)
 	}
@@ -132,13 +136,13 @@ func TestCountriesNormalizesCodes(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	client := newTestClient(t, server)
-	services, err := client.Countries(context.Background(), "zasilkovna")
+	services, err := client.Countries(context.Background(), carrier.ZASILKOVNA)
 	if err != nil {
 		t.Fatalf("Countries: %v", err)
 	}
 	if len(services) != 2 ||
-		services[0].ServiceType != "VMCZ" || services[0].Countries[0] != "CZ" ||
-		services[1].ServiceType != "6830" || services[1].Countries[0] != "AT" {
+		services[0].ServiceType != "VMCZ" || services[0].Countries[0] != country.CZ ||
+		services[1].ServiceType != "6830" || services[1].Countries[0] != country.AT {
 		t.Fatalf("countries = %#v", services)
 	}
 }
@@ -161,7 +165,7 @@ func TestCODNormalizesCountriesAndToleratesUnsupported(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	client := newTestClient(t, server)
-	services, err := client.COD(context.Background(), "zasilkovna")
+	services, err := client.COD(context.Background(), carrier.ZASILKOVNA)
 	if err != nil {
 		t.Fatalf("COD: %v", err)
 	}
@@ -170,7 +174,7 @@ func TestCODNormalizesCountriesAndToleratesUnsupported(t *testing.T) {
 		t.Fatalf("cod = %#v", services)
 	}
 	first := services[0].Countries[0]
-	if first.Country != "CZ" || first.Currency != "CZK" || first.MaxAmountMinor != 149995 {
+	if first.Country != country.CZ || first.Currency != currency.CZK || first.MaxAmountMinor != 149995 {
 		t.Fatalf("cod entry = %#v", first)
 	}
 
@@ -179,7 +183,7 @@ func TestCODNormalizesCountriesAndToleratesUnsupported(t *testing.T) {
 	}))
 	t.Cleanup(unsupported.Close)
 	unsupportedClient := newTestClient(t, unsupported)
-	services, err = unsupportedClient.COD(context.Background(), "zasilkovna")
+	services, err = unsupportedClient.COD(context.Background(), carrier.ZASILKOVNA)
 	if err != nil || len(services) != 0 {
 		t.Fatalf("unsupported cod = %#v, %v", services, err)
 	}
@@ -203,7 +207,7 @@ func TestCarrierCapabilitiesDiscoversEveryWhoAmIContractedCarrier(t *testing.T) 
 	if len(paths) != 5 || paths[0] != "/info/whoami" {
 		t.Fatalf("discovery paths = %#v", paths)
 	}
-	ppl := findCarrier(carriers, "ppl")
+	ppl := findCarrier(carriers, carrier.PPL)
 	if ppl == nil {
 		t.Fatalf("ppl carrier missing: %#v", carriers)
 	}
@@ -218,7 +222,8 @@ func TestCarrierCapabilitiesDiscoversEveryWhoAmIContractedCarrier(t *testing.T) 
 		service.HomeDelivery == nil || !*service.HomeDelivery {
 		t.Fatalf("service = %#v", service)
 	}
-	if service.Countries["CZ"] != true || service.Countries["DE"] != true || service.Countries["US"] != false {
+	if service.Countries[country.CZ] != true || service.Countries[country.DE] != true ||
+		service.Countries[country.US] != false {
 		t.Fatalf("countries = %#v", service.Countries)
 	}
 	if len(service.COD) != 0 {
@@ -333,17 +338,17 @@ func TestCarrierCapabilitiesScopesDictionariesToConfiguredCarriers(t *testing.T)
 
 	for _, testCase := range []struct {
 		name         string
-		scope        [][]string
+		scope        [][]carrier.Code
 		wantCarriers int
 		wantRequests int32
 		wantErr      error
 	}{
-		{"used carrier only", [][]string{{" PPL ", "ppl"}}, 1, 3, nil},
-		{"empty scope", [][]string{{}}, 0, 1, nil},
-		{"nil explicit scope", [][]string{nil}, 0, 1, nil},
-		{"missing from account", [][]string{{"dpd"}}, 0, 1, ErrInvalidResponse},
-		{"invalid scope", [][]string{{"ppl/lockers"}}, 0, 1, ErrInvalidResponse},
-		{"used carrier unavailable", [][]string{{"lockers"}}, 0, 3, ErrUnavailable},
+		{"used carrier only", [][]carrier.Code{{" PPL ", "ppl"}}, 1, 3, nil},
+		{"empty scope", [][]carrier.Code{{}}, 0, 1, nil},
+		{"nil explicit scope", [][]carrier.Code{nil}, 0, 1, nil},
+		{"missing from account", [][]carrier.Code{{carrier.DPD}}, 0, 1, ErrInvalidResponse},
+		{"invalid scope", [][]carrier.Code{{"ppl/lockers"}}, 0, 1, ErrInvalidResponse},
+		{"used carrier unavailable", [][]carrier.Code{{"lockers"}}, 0, 3, ErrUnavailable},
 		{"unscoped discovers all", nil, 0, 5, ErrUnavailable},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -477,11 +482,11 @@ func TestCarrierCapabilitiesSkipsUnusedCODDictionary(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CarrierCapabilities: %v", err)
 	}
-	carrier := findCarrier(carriers, "zasilkovna")
-	if carrier == nil || len(carrier.Services) != 1 ||
-		carrier.Services[0].Code != "VMCZ" || !carrier.Services[0].Countries["CZ"] ||
-		len(carrier.Services[0].COD) != 0 {
-		t.Fatalf("snapshot = %#v", carrier)
+	zasilkovna := findCarrier(carriers, carrier.ZASILKOVNA)
+	if zasilkovna == nil || len(zasilkovna.Services) != 1 ||
+		zasilkovna.Services[0].Code != "VMCZ" || !zasilkovna.Services[0].Countries[country.CZ] ||
+		len(zasilkovna.Services[0].COD) != 0 {
+		t.Fatalf("snapshot = %#v", zasilkovna)
 	}
 }
 
@@ -536,7 +541,7 @@ func TestCarrierCapabilitiesDoesNotRequestCOD(t *testing.T) {
 	t.Cleanup(server.Close)
 	client := newTestClient(t, server)
 	carriers, err := client.CarrierCapabilities(t.Context())
-	if err != nil || len(carriers) != 2 || carriers[1].CarrierCode != CarrierPPL {
+	if err != nil || len(carriers) != 2 || carriers[1].CarrierCode != carrier.PPL {
 		t.Fatalf("CarrierCapabilities = %#v, %v", carriers, err)
 	}
 }
@@ -558,8 +563,8 @@ func TestCapabilityWireNormalizesCountries(t *testing.T) {
 				t.Fatalf("decode capabilities: %v", err)
 			}
 			if len(services) != 1 || services[0].Code != "4" ||
-				!services[0].Countries["CZ"] || !services[0].Countries["RO"] ||
-				services[0].Countries["US"] || services[0].Countries["SK"] {
+				!services[0].Countries[country.CZ] || !services[0].Countries[country.RO] ||
+				services[0].Countries[country.US] || services[0].Countries[country.SK] {
 				t.Fatalf("delivery capabilities = %#v", services)
 			}
 		})
@@ -667,7 +672,7 @@ func validAccountPickupRequest() PickupRequest {
 
 func assertAccountPickupAccepted(t *testing.T, client *Client) {
 	t.Helper()
-	if _, err := client.OrderPickup(t.Context(), CarrierDPDCZ, validAccountPickupRequest()); err != nil {
+	if _, err := client.OrderPickup(t.Context(), carrier.DPDCZ, validAccountPickupRequest()); err != nil {
 		t.Fatalf("OrderPickup: %v", err)
 	}
 }
@@ -698,7 +703,7 @@ func TestAccountModeGuardsWritesBeforeSending(t *testing.T) {
 			client, fixture := newAccountFixture(t, testCase.liveAccount)
 			fixture.status.Store(int32(testCase.status))
 			fixture.body.Store(testCase.body)
-			_, err := client.OrderPickup(t.Context(), CarrierDPDCZ, validAccountPickupRequest())
+			_, err := client.OrderPickup(t.Context(), carrier.DPDCZ, validAccountPickupRequest())
 			if (err == nil) != testCase.wantAccept {
 				t.Fatalf("OrderPickup error = %v, want accepted %t", err, testCase.wantAccept)
 			}
@@ -724,7 +729,7 @@ func TestAccountModeCachesSuccessAcrossConcurrentWrites(t *testing.T) {
 	for range 12 {
 		workers.Go(func() {
 			if _, err := client.OrderPickup(
-				t.Context(), CarrierDPDCZ, validAccountPickupRequest(),
+				t.Context(), carrier.DPDCZ, validAccountPickupRequest(),
 			); err != nil {
 				t.Errorf("OrderPickup: %v", err)
 			}
@@ -747,7 +752,7 @@ func TestAccountModeRechecksExpiredApproval(t *testing.T) {
 	client.accountModeMu.Unlock()
 	fixture.body.Store(liveAccountBody)
 	if _, err := client.OrderPickup(
-		t.Context(), CarrierDPDCZ, validAccountPickupRequest(),
+		t.Context(), carrier.DPDCZ, validAccountPickupRequest(),
 	); err == nil {
 		t.Fatal("expired approval allowed a pickup for the wrong account mode")
 	}
@@ -763,7 +768,7 @@ func TestAccountModeRetriesVerificationAfterFailure(t *testing.T) {
 	client, fixture := newAccountFixture(t, false)
 	fixture.body.Store(liveAccountBody)
 	if _, err := client.OrderPickup(
-		t.Context(), CarrierDPDCZ, validAccountPickupRequest(),
+		t.Context(), carrier.DPDCZ, validAccountPickupRequest(),
 	); err == nil {
 		t.Fatal("mismatched account allowed a pickup")
 	}
@@ -780,9 +785,9 @@ func TestAccountModeBlocksShipmentMutationsWithoutAmbiguousOutcome(t *testing.T)
 
 	client, fixture := newAccountFixture(t, false)
 	fixture.body.Store(liveAccountBody)
-	_, addErr := client.AddPackage(t.Context(), CarrierPPL, validTestAddRequest())
-	_, orderErr := client.OrderBatch(t.Context(), CarrierPPL, "12345")
-	dropErr := client.DropPackage(t.Context(), CarrierPPL, "12345")
+	_, addErr := client.AddPackage(t.Context(), carrier.PPL, validTestAddRequest())
+	_, orderErr := client.OrderBatch(t.Context(), carrier.PPL, "12345")
+	dropErr := client.DropPackage(t.Context(), carrier.PPL, "12345")
 	for _, err := range []error{addErr, orderErr, dropErr} {
 		if !errors.Is(err, ErrUnavailable) || errors.Is(err, ErrAmbiguous) {
 			t.Errorf("unsent mutation error = %v, want unavailable without ambiguity", err)
@@ -806,7 +811,7 @@ func TestAccountModeTransportFailureInvalidatesWriteApproval(t *testing.T) {
 	client.client.Transport = transport
 	fixture.body.Store(liveAccountBody)
 	if _, err := client.OrderPickup(
-		t.Context(), CarrierDPDCZ, validAccountPickupRequest(),
+		t.Context(), carrier.DPDCZ, validAccountPickupRequest(),
 	); err == nil {
 		t.Fatal("WHOAMI transport failure retained write approval")
 	}
@@ -838,7 +843,7 @@ func TestAccountModeCapabilityFailureInvalidatesWriteApproval(t *testing.T) {
 				t.Fatal("failed account check allowed capability refresh")
 			}
 			if _, err := client.OrderPickup(
-				t.Context(), CarrierDPDCZ, validAccountPickupRequest(),
+				t.Context(), carrier.DPDCZ, validAccountPickupRequest(),
 			); err == nil {
 				t.Fatal("failed capability account check retained write approval")
 			}

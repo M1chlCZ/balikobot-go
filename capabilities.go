@@ -12,6 +12,10 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/m1chlcz/balikobot-go/carrier"
+	"github.com/m1chlcz/balikobot-go/country"
+	"github.com/m1chlcz/balikobot-go/currency"
 )
 
 // WhoAmI is the account information returned by the WHOAMI method.
@@ -28,7 +32,7 @@ type WhoAmI struct {
 // WhoAmICarrier is one contracted carrier of the account.
 type WhoAmICarrier struct {
 	// Slug is the carrier code used in request paths.
-	Slug string
+	Slug carrier.Code
 	// Name is the carrier display name. It can be empty.
 	Name string
 }
@@ -36,7 +40,7 @@ type WhoAmICarrier struct {
 // Carrier aggregates the discovered services of one contracted carrier.
 type Carrier struct {
 	// CarrierCode is the carrier code used in request paths.
-	CarrierCode string
+	CarrierCode carrier.Code
 	// Services lists the activated services of the carrier.
 	Services []Service
 }
@@ -59,7 +63,7 @@ type Service struct {
 	// Countries maps the destination country codes supported by the service.
 	// CarrierCapabilities keeps only EU destinations, matching the reference
 	// integration.
-	Countries map[string]bool
+	Countries map[country.Code]bool
 	// COD lists the supported cash-on-delivery destinations. The combined
 	// discovery leaves it empty because it does not request the optional COD
 	// dictionary.
@@ -69,9 +73,9 @@ type Service struct {
 // CODCapability is one cash-on-delivery destination of a service.
 type CODCapability struct {
 	// Country is the ISO 3166-1 alpha-2 destination country.
-	Country string
+	Country country.Code
 	// Currency is the three-letter currency code.
-	Currency string
+	Currency currency.Code
 	// MaxAmountMinor is the maximum cash-on-delivery amount in minor units,
 	// for example 149995 for 1499.95 CZK.
 	MaxAmountMinor int64
@@ -93,7 +97,7 @@ type ServiceCountries struct {
 	ServiceType string
 	// Countries lists the destination country codes exactly as sent, with
 	// surrounding whitespace trimmed and letters upper-cased.
-	Countries []string
+	Countries []country.Code
 }
 
 // ServiceCOD is one entry of the COD4SERVICES answer.
@@ -267,8 +271,11 @@ func (client *Client) WhoAmI(ctx context.Context) (WhoAmI, error) {
 		return WhoAmI{}, err
 	}
 	carriers := make([]WhoAmICarrier, 0, len(wire.Carriers))
-	for _, carrier := range wire.Carriers {
-		carriers = append(carriers, WhoAmICarrier{Slug: carrier.Slug, Name: carrier.Name})
+	for _, entry := range wire.Carriers {
+		carriers = append(carriers, WhoAmICarrier{
+			Slug: carrier.Code(entry.Slug),
+			Name: entry.Name,
+		})
 	}
 	return WhoAmI{
 		Status:      wire.Status.value,
@@ -280,13 +287,13 @@ func (client *Client) WhoAmI(ctx context.Context) (WhoAmI, error) {
 // ActivatedServices calls the ACTIVATEDSERVICES method of one carrier and
 // returns the normalized activated services. When the provider reports that
 // parcel shipping is inactive, the service list is empty.
-func (client *Client) ActivatedServices(ctx context.Context, carrier string) (ActivatedServices, error) {
-	if client == nil || client.client == nil || !carrierPattern.MatchString(carrier) {
+func (client *Client) ActivatedServices(ctx context.Context, carrierCode carrier.Code) (ActivatedServices, error) {
+	if client == nil || client.client == nil || !carrierCode.Valid() {
 		return ActivatedServices{}, ErrInvalidRequest
 	}
 	var wire activatedServicesCapabilityResponse
 	if err := client.capabilityGET(
-		ctx, "/"+carrier+"/activatedservices", &wire, false,
+		ctx, "/"+string(carrierCode)+"/activatedservices", &wire, false,
 	); err != nil {
 		return ActivatedServices{}, err
 	}
@@ -300,13 +307,13 @@ func (client *Client) ActivatedServices(ctx context.Context, carrier string) (Ac
 // Countries calls the COUNTRIES4SERVICE method of one carrier and returns the
 // supported destination countries per service. Every country sent by the
 // provider is kept.
-func (client *Client) Countries(ctx context.Context, carrier string) ([]ServiceCountries, error) {
-	if client == nil || client.client == nil || !carrierPattern.MatchString(carrier) {
+func (client *Client) Countries(ctx context.Context, carrierCode carrier.Code) ([]ServiceCountries, error) {
+	if client == nil || client.client == nil || !carrierCode.Valid() {
 		return nil, ErrInvalidRequest
 	}
 	var wire countriesCapabilityResponse
 	if err := client.capabilityGET(
-		ctx, "/"+carrier+"/countries4service", &wire, false,
+		ctx, "/"+string(carrierCode)+"/countries4service", &wire, false,
 	); err != nil {
 		return nil, err
 	}
@@ -322,9 +329,9 @@ func (client *Client) Countries(ctx context.Context, carrier string) ([]ServiceC
 		if !validCapabilityServiceCode(code) || len(entry.Countries) > capabilityServiceLimit {
 			return nil, ErrInvalidResponse
 		}
-		countries := make([]string, 0, len(entry.Countries))
-		for _, country := range entry.Countries {
-			countries = append(countries, strings.ToUpper(strings.TrimSpace(country)))
+		countries := make([]country.Code, 0, len(entry.Countries))
+		for _, rawCountry := range entry.Countries {
+			countries = append(countries, country.Code(strings.ToUpper(strings.TrimSpace(rawCountry))))
 		}
 		result = append(result, ServiceCountries{ServiceType: code, Countries: countries})
 	}
@@ -335,13 +342,13 @@ func (client *Client) Countries(ctx context.Context, carrier string) ([]ServiceC
 // cash-on-delivery destinations per service. Every country sent by the
 // provider is kept. A carrier without the optional dictionary returns an empty
 // list.
-func (client *Client) COD(ctx context.Context, carrier string) ([]ServiceCOD, error) {
-	if client == nil || client.client == nil || !carrierPattern.MatchString(carrier) {
+func (client *Client) COD(ctx context.Context, carrierCode carrier.Code) ([]ServiceCOD, error) {
+	if client == nil || client.client == nil || !carrierCode.Valid() {
 		return nil, ErrInvalidRequest
 	}
 	var wire codCapabilityResponse
 	if err := client.capabilityGET(
-		ctx, "/"+carrier+"/cod4services", &wire, true,
+		ctx, "/"+string(carrierCode)+"/cod4services", &wire, true,
 	); err != nil {
 		return nil, err
 	}
@@ -374,7 +381,7 @@ func (client *Client) COD(ctx context.Context, carrier string) ([]ServiceCOD, er
 // integration.
 func (client *Client) CarrierCapabilities(
 	ctx context.Context,
-	carrierScope ...[]string,
+	carrierScope ...[]carrier.Code,
 ) ([]Carrier, error) {
 	if client == nil || client.client == nil {
 		return nil, ErrInvalidRequest
@@ -390,14 +397,14 @@ func (client *Client) CarrierCapabilities(
 	for index := range carriers {
 		activated := activatedServicesCapabilityResponse{}
 		countries := countriesCapabilityResponse{}
-		carrier := carriers[index].CarrierCode
+		carrierCode := carriers[index].CarrierCode
 		if fetchErr := client.capabilityGET(
-			ctx, "/"+carrier+"/activatedservices", &activated, false,
+			ctx, "/"+string(carrierCode)+"/activatedservices", &activated, false,
 		); fetchErr != nil {
 			return nil, fetchErr
 		}
 		if fetchErr := client.capabilityGET(
-			ctx, "/"+carrier+"/countries4service", &countries, false,
+			ctx, "/"+string(carrierCode)+"/countries4service", &countries, false,
 		); fetchErr != nil {
 			return nil, fetchErr
 		}
@@ -452,33 +459,36 @@ func (client *Client) capabilityGET(
 
 func scopedCapabilityCarriers(
 	contracted []capabilityCarrierWire,
-	scope [][]string,
+	scope [][]carrier.Code,
 ) ([]Carrier, error) {
 	if len(contracted) > capabilityCarrierLimit || len(scope) > 1 {
 		return nil, ErrInvalidResponse
 	}
-	available := make(map[string]bool, len(contracted))
-	for _, carrier := range contracted {
-		code := strings.ToLower(strings.TrimSpace(carrier.Slug))
-		if !carrierPattern.MatchString(code) {
+	available := make(map[carrier.Code]bool, len(contracted))
+	for _, entry := range contracted {
+		code, err := carrier.FromString(entry.Slug)
+		if err != nil {
 			return nil, ErrInvalidResponse
 		}
 		available[code] = true
 	}
 	requested := available
 	if len(scope) == 1 {
-		requested = make(map[string]bool, len(scope[0]))
-		for _, carrier := range scope[0] {
-			code := strings.ToLower(strings.TrimSpace(carrier))
-			if !available[code] {
+		requested = make(map[carrier.Code]bool, len(scope[0]))
+		for _, candidate := range scope[0] {
+			code, err := carrier.FromString(string(candidate))
+			if err != nil || !available[code] {
 				return nil, ErrInvalidResponse
 			}
 			requested[code] = true
 		}
 	}
 	carriers := make([]Carrier, 0, len(requested))
-	for _, carrier := range contracted {
-		code := strings.ToLower(strings.TrimSpace(carrier.Slug))
+	for _, entry := range contracted {
+		code, err := carrier.FromString(entry.Slug)
+		if err != nil {
+			return nil, ErrInvalidResponse
+		}
 		if requested[code] {
 			carriers = append(carriers, Carrier{CarrierCode: code})
 			delete(requested, code)
@@ -554,12 +564,12 @@ func mergeCapabilityCountries(
 			continue
 		}
 		if services[serviceIndex].Countries == nil {
-			services[serviceIndex].Countries = make(map[string]bool)
+			services[serviceIndex].Countries = make(map[country.Code]bool)
 		}
-		for _, country := range wire.Countries {
-			country = strings.ToUpper(strings.TrimSpace(country))
-			if isEUCountryCode(country) {
-				services[serviceIndex].Countries[country] = true
+		for _, rawCountry := range wire.Countries {
+			normalized := country.Code(strings.ToUpper(strings.TrimSpace(rawCountry)))
+			if isEUCountryCode(normalized) {
+				services[serviceIndex].Countries[normalized] = true
 			}
 		}
 	}
@@ -599,39 +609,39 @@ func mergeCODCountries(
 	entries []CODCapability,
 	countries []codCountryWire,
 ) ([]CODCapability, error) {
-	for _, country := range countries {
-		entry, err := normalizeCODCapability(country)
+	for _, entry := range countries {
+		capability, err := normalizeCODCapability(entry)
 		if err != nil {
 			return nil, err
 		}
-		if !isEUCountryCode(entry.Country) {
+		if !isEUCountryCode(capability.Country) {
 			continue
 		}
-		if existing := findCODCapability(entries, entry.Country, entry.Currency); existing != nil {
-			if *existing != entry {
+		if existing := findCODCapability(entries, capability.Country, capability.Currency); existing != nil {
+			if *existing != capability {
 				return nil, ErrInvalidResponse
 			}
 			continue
 		}
-		entries = append(entries, entry)
+		entries = append(entries, capability)
 	}
 	return entries, nil
 }
 
 func normalizeCODCountries(countries []codCountryWire) ([]CODCapability, error) {
 	entries := make([]CODCapability, 0, len(countries))
-	for _, country := range countries {
-		entry, err := normalizeCODCapability(country)
+	for _, entry := range countries {
+		capability, err := normalizeCODCapability(entry)
 		if err != nil {
 			return nil, err
 		}
-		if existing := findCODCapability(entries, entry.Country, entry.Currency); existing != nil {
-			if *existing != entry {
+		if existing := findCODCapability(entries, capability.Country, capability.Currency); existing != nil {
+			if *existing != capability {
 				return nil, ErrInvalidResponse
 			}
 			continue
 		}
-		entries = append(entries, entry)
+		entries = append(entries, capability)
 	}
 	return entries, nil
 }
@@ -653,7 +663,7 @@ func normalizeActivatedService(wire activatedServiceWire) (Service, error) {
 		HomeDelivery:         wire.HomeDelivery,
 		BoxDelivery:          wire.BoxDelivery,
 		PickupPointsDelivery: wire.PickupPointsDelivery,
-		Countries:            make(map[string]bool),
+		Countries:            make(map[country.Code]bool),
 	}, nil
 }
 
@@ -675,17 +685,23 @@ func boolPointerEqual(left, right *bool) bool {
 }
 
 func normalizeCODCapability(wire codCountryWire) (CODCapability, error) {
-	country := strings.ToUpper(strings.TrimSpace(wire.Country))
-	currency := strings.ToUpper(strings.TrimSpace(wire.Currency))
-	if !countryPattern.MatchString(country) || len(currency) != currencyCodeLength ||
-		strings.Trim(currency, "ABCDEFGHIJKLMNOPQRSTUVWXYZ") != "" {
+	countryCode, err := country.FromString(wire.Country)
+	if err != nil {
+		return CODCapability{}, ErrInvalidResponse
+	}
+	currencyCode, err := currency.FromString(wire.Currency)
+	if err != nil {
 		return CODCapability{}, ErrInvalidResponse
 	}
 	minor, ok := majorPriceToMinor(wire.MaxPrice)
 	if !ok {
 		return CODCapability{}, ErrInvalidResponse
 	}
-	return CODCapability{Country: country, Currency: currency, MaxAmountMinor: minor}, nil
+	return CODCapability{
+		Country:        countryCode,
+		Currency:       currencyCode,
+		MaxAmountMinor: minor,
+	}, nil
 }
 
 func majorPriceToMinor(raw json.RawMessage) (int64, bool) {
@@ -715,21 +731,21 @@ func majorPriceToMinor(raw json.RawMessage) (int64, bool) {
 	return rational.Num().Int64(), true
 }
 
-func findCODCapability(entries []CODCapability, country, currency string) *CODCapability {
+func findCODCapability(entries []CODCapability, target country.Code, targetCurrency currency.Code) *CODCapability {
 	for index := range entries {
-		if entries[index].Country == country && entries[index].Currency == currency {
+		if entries[index].Country == target && entries[index].Currency == targetCurrency {
 			return &entries[index]
 		}
 	}
 	return nil
 }
 
-func isEUCountryCode(code string) bool {
+func isEUCountryCode(code country.Code) bool {
 	switch code {
-	case "AT", "BE", "BG", "HR", "CY", "CZ", "DK",
-		"EE", "FI", "FR", "DE", "GR", "HU", "IE",
-		"IT", "LV", "LT", "LU", "MT", "NL", "PL",
-		"PT", "RO", "SK", "SI", "ES", "SE":
+	case country.AT, country.BE, country.BG, country.HR, country.CY, country.CZ, country.DK,
+		country.EE, country.FI, country.FR, country.DE, country.GR, country.HU, country.IE,
+		country.IT, country.LV, country.LT, country.LU, country.MT, country.NL, country.PL,
+		country.PT, country.RO, country.SK, country.SI, country.ES, country.SE:
 		return true
 	}
 	return false

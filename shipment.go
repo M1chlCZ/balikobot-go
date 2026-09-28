@@ -11,6 +11,10 @@ import (
 	"strings"
 	"syscall"
 	"unicode/utf8"
+
+	"github.com/m1chlcz/balikobot-go/carrier"
+	"github.com/m1chlcz/balikobot-go/country"
+	"github.com/m1chlcz/balikobot-go/currency"
 )
 
 // AddPackageRequest is one package for the ADD method. The external reference
@@ -34,7 +38,7 @@ type AddPackageRequest struct {
 	RecZip string `json:"rec_zip"`
 	// RecCountry is the ISO 3166-1 alpha-2 destination country. It is
 	// required.
-	RecCountry string `json:"rec_country"`
+	RecCountry country.Code `json:"rec_country"`
 	// RecPhone is the recipient phone. RecPhone or RecEmail must be set.
 	RecPhone string `json:"rec_phone,omitempty"`
 	// RecEmail is the recipient email. RecPhone or RecEmail must be set.
@@ -62,7 +66,7 @@ type AddPackageRequest struct {
 	// CODCurrency is the cash-on-delivery currency. Balíkobot carriers
 	// validate this field even without a COD amount, so "CZK" or "EUR" is
 	// required on every ADD.
-	CODCurrency string `json:"cod_currency,omitempty"`
+	CODCurrency currency.Code `json:"cod_currency,omitempty"`
 	// VS is the cash-on-delivery variable symbol. It must be set exactly when
 	// CODPrice is positive and must be below 10000000000.
 	VS *int64 `json:"vs,omitempty"`
@@ -183,7 +187,7 @@ func validateAddIdentity(request AddPackageRequest) error {
 		return ErrInvalidRequest
 	case request.RecPhone == "" && request.RecEmail == "":
 		return ErrInvalidRequest
-	case request.CODCurrency != "CZK" && request.CODCurrency != "EUR":
+	case request.CODCurrency != currency.CZK && request.CODCurrency != currency.EUR:
 		return ErrInvalidRequest
 	case request.CODPrice > 0 && request.VS == nil:
 		return ErrInvalidRequest
@@ -204,7 +208,7 @@ func validateAddRecipient(request AddPackageRequest) error {
 	}
 	switch {
 	case request.RecStreet == "" || request.RecCity == "" ||
-		request.RecZip == "" || !countryPattern.MatchString(request.RecCountry):
+		request.RecZip == "" || !request.RecCountry.Valid():
 		return ErrInvalidRequest
 	case request.BranchID != "" && !branchIDPattern.MatchString(request.BranchID):
 		return ErrInvalidRequest
@@ -232,16 +236,16 @@ func validateAddParcel(request AddPackageRequest) error {
 // of a carrier. Česká pošta and Slovenská pošta use the branch ZIP without
 // spaces, the Uloženka CP_NP service does the same, PPL strips the KM prefix,
 // and every other carrier uses the stored branch id unchanged.
-func ResolveBranchID(carrier, service, branchID, branchZip string) string {
-	switch carrier {
-	case "cp", "sp":
+func ResolveBranchID(carrierCode carrier.Code, service, branchID, branchZip string) string {
+	switch carrierCode {
+	case carrier.CP, carrier.SP:
 		return strings.ReplaceAll(branchZip, " ", "")
-	case "ulozenka":
+	case carrier.ULOZENKA:
 		if service == "CP_NP" {
 			return strings.ReplaceAll(branchZip, " ", "")
 		}
 		return branchID
-	case "ppl":
+	case carrier.PPL:
 		return strings.TrimPrefix(branchID, "KM")
 	default:
 		return branchID
@@ -253,16 +257,16 @@ func ResolveBranchID(carrier, service, branchID, branchZip string) string {
 // with the original record, which maps to a successful result.
 func (client *Client) AddPackage(
 	ctx context.Context,
-	carrier string,
+	carrierCode carrier.Code,
 	request AddPackageRequest,
 ) (AddPackageResult, error) {
 	if client == nil || client.client == nil ||
-		!carrierPattern.MatchString(carrier) ||
+		!carrierCode.Valid() ||
 		validateAddPackage(request) != nil {
 		return AddPackageResult{}, ErrInvalidRequest
 	}
 	response, err := client.request(
-		ctx, http.MethodPost, "/"+carrier+"/add",
+		ctx, http.MethodPost, "/"+string(carrierCode)+"/add",
 		map[string]any{"packages": []AddPackageRequest{request}},
 	)
 	if err != nil {
@@ -355,14 +359,14 @@ func (client *Client) decodeAddPackage(
 // different EID is skipped, while a malformed matching entry fails the call.
 func (client *Client) Overview(
 	ctx context.Context,
-	carrier string,
+	carrierCode carrier.Code,
 	matchEID string,
 ) ([]OverviewPackage, error) {
 	if client == nil || client.client == nil ||
-		!carrierPattern.MatchString(carrier) {
+		!carrierCode.Valid() {
 		return nil, ErrInvalidRequest
 	}
-	response, err := client.request(ctx, http.MethodGet, "/"+carrier+"/overview", nil)
+	response, err := client.request(ctx, http.MethodGet, "/"+string(carrierCode)+"/overview", nil)
 	if err != nil {
 		return nil, dispatchError(err)
 	}
@@ -416,16 +420,16 @@ func (client *Client) Overview(
 // entered ORDER yet.
 func (client *Client) Labels(
 	ctx context.Context,
-	carrier string,
+	carrierCode carrier.Code,
 	packageID string,
 ) (string, error) {
 	if client == nil || client.client == nil ||
-		!carrierPattern.MatchString(carrier) ||
+		!carrierCode.Valid() ||
 		!validPackageID(packageID) {
 		return "", ErrInvalidRequest
 	}
 	response, err := client.request(
-		ctx, http.MethodPost, "/"+carrier+"/labels",
+		ctx, http.MethodPost, "/"+string(carrierCode)+"/labels",
 		map[string]any{fieldPackageIDs: []string{packageID}},
 	)
 	if err != nil {
@@ -457,18 +461,18 @@ func (client *Client) Labels(
 // order id and the membership of the requested package id.
 func (client *Client) OrderViewLabels(
 	ctx context.Context,
-	carrier string,
+	carrierCode carrier.Code,
 	orderID string,
 	packageID string,
 ) (string, error) {
 	if client == nil || client.client == nil ||
-		!carrierPattern.MatchString(carrier) ||
+		!carrierCode.Valid() ||
 		!validPackageID(orderID) ||
 		!validPackageID(packageID) {
 		return "", ErrInvalidRequest
 	}
 	response, err := client.request(
-		ctx, http.MethodGet, "/"+carrier+"/orderview/"+url.PathEscape(orderID), nil,
+		ctx, http.MethodGet, "/"+string(carrierCode)+"/orderview/"+url.PathEscape(orderID), nil,
 	)
 	if err != nil {
 		return "", &TransientError{}

@@ -12,6 +12,9 @@ import (
 	"testing"
 	"testing/synctest"
 	"time"
+
+	"github.com/m1chlcz/balikobot-go/carrier"
+	"github.com/m1chlcz/balikobot-go/country"
 )
 
 func newTestClient(t *testing.T, server *httptest.Server) *Client {
@@ -60,7 +63,7 @@ func TestClientUsesInjectedHTTPClient(t *testing.T) {
 	t.Cleanup(server.Close)
 	client := newTestClient(t, server)
 
-	if _, err := client.Branches(t.Context(), "ppl", "1", "CZ"); err != nil {
+	if _, err := client.Branches(t.Context(), carrier.PPL, "1", country.CZ); err != nil {
 		t.Fatalf("Branches: %v", err)
 	}
 }
@@ -182,7 +185,7 @@ func TestBranchesUsesOfficialV2Contract(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	client := newTestClient(t, server)
-	branches, err := client.Branches(context.Background(), "ppl", "1", "CZ")
+	branches, err := client.Branches(context.Background(), carrier.PPL, "1", country.CZ)
 	if err != nil {
 		t.Fatalf("Branches: %v", err)
 	}
@@ -219,7 +222,7 @@ func TestBranchesZasilkovnaObjectListAndCountryOnlyPath(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	client := newTestClient(t, server)
-	branches, err := client.Branches(context.Background(), "zasilkovna", "VMCZ", "CZ")
+	branches, err := client.Branches(context.Background(), carrier.ZASILKOVNA, "VMCZ", country.CZ)
 	if err != nil {
 		t.Fatalf("Branches: %v", err)
 	}
@@ -244,7 +247,7 @@ func TestBranchesObjectListSortsMixedKeysDeterministically(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	client := newTestClient(t, server)
-	branches, err := client.Branches(context.Background(), "ppl", "1", "CZ")
+	branches, err := client.Branches(context.Background(), carrier.PPL, "1", country.CZ)
 	if err != nil {
 		t.Fatalf("Branches: %v", err)
 	}
@@ -273,7 +276,7 @@ func TestBranchesFiltersCountryClientSide(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	client := newTestClient(t, server)
-	branches, err := client.Branches(context.Background(), "cp", "NP", "CZ")
+	branches, err := client.Branches(context.Background(), carrier.CP, "NP", country.CZ)
 	if err != nil {
 		t.Fatalf("Branches: %v", err)
 	}
@@ -297,7 +300,7 @@ func TestBranchesFallsBackToZipName(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	client := newTestClient(t, server)
-	branches, err := client.Branches(context.Background(), "ppl", "1", "CZ")
+	branches, err := client.Branches(context.Background(), carrier.PPL, "1", country.CZ)
 	if err != nil {
 		t.Fatalf("Branches: %v", err)
 	}
@@ -322,7 +325,7 @@ func TestBranchesClassifiesProviderFailure(t *testing.T) {
 			}))
 			t.Cleanup(server.Close)
 			client := newTestClient(t, server)
-			_, err := client.Branches(context.Background(), "ppl", "1", "CZ")
+			_, err := client.Branches(context.Background(), carrier.PPL, "1", country.CZ)
 			if !errors.Is(err, ErrUnavailable) {
 				t.Fatalf("Branches HTTP %d error = %v", statusCode, err)
 			}
@@ -339,7 +342,7 @@ func TestBranchesClassifiesProviderFailure(t *testing.T) {
 			}))
 			t.Cleanup(server.Close)
 			client := newTestClient(t, server)
-			_, err := client.Branches(context.Background(), "ppl", "1", "CZ")
+			_, err := client.Branches(context.Background(), carrier.PPL, "1", country.CZ)
 			if !errors.Is(err, ErrInvalidResponse) {
 				t.Fatalf("Branches HTTP %d error = %v", statusCode, err)
 			}
@@ -355,7 +358,7 @@ func TestBranchesClassifiesProviderFailure(t *testing.T) {
 			}))
 			t.Cleanup(server.Close)
 			client := newTestClient(t, server)
-			_, err := client.Branches(context.Background(), "ppl", "1", "CZ")
+			_, err := client.Branches(context.Background(), carrier.PPL, "1", country.CZ)
 			if !errors.Is(err, ErrUnavailable) {
 				t.Fatalf("Branches body %s error = %v", bodyStatus, err)
 			}
@@ -370,7 +373,7 @@ func TestBranchesClassifiesProviderFailure(t *testing.T) {
 		}))
 		t.Cleanup(server.Close)
 		client := newTestClient(t, server)
-		_, err := client.Branches(context.Background(), "ppl", "1", "CZ")
+		_, err := client.Branches(context.Background(), carrier.PPL, "1", country.CZ)
 		if !errors.Is(err, ErrInvalidResponse) {
 			t.Fatalf("Branches body 501 error = %v", err)
 		}
@@ -386,7 +389,7 @@ func TestBranchesClassifiesProviderFailure(t *testing.T) {
 			client := newTestClientWithConfig(t, server, func(config *Config) {
 				config.Timeout = 20 * time.Millisecond
 			})
-			_, err := client.Branches(t.Context(), "ppl", "1", "CZ")
+			_, err := client.Branches(t.Context(), carrier.PPL, "1", country.CZ)
 			if !errors.Is(err, ErrUnavailable) {
 				t.Fatalf("Branches timeout error = %v", err)
 			}
@@ -403,7 +406,7 @@ func TestBranchesClassifiesProviderFailure(t *testing.T) {
 		client := newTestClientWithConfig(t, server, func(config *Config) {
 			config.MaxResponseBytes = 256
 		})
-		_, err := client.Branches(context.Background(), "ppl", "1", "CZ")
+		_, err := client.Branches(context.Background(), carrier.PPL, "1", country.CZ)
 		if !errors.Is(err, ErrUnavailable) {
 			t.Fatalf("Branches oversized response error = %v", err)
 		}
@@ -429,7 +432,7 @@ func TestBranchesRejectsMalformedPayload(t *testing.T) {
 			}))
 			t.Cleanup(server.Close)
 			client := newTestClient(t, server)
-			_, err := client.Branches(context.Background(), "ppl", "1", "CZ")
+			_, err := client.Branches(context.Background(), carrier.PPL, "1", country.CZ)
 			if !errors.Is(err, ErrInvalidResponse) {
 				t.Fatalf("Branches %s error = %v", name, err)
 			}
@@ -444,7 +447,7 @@ func TestBranchesRejectsMalformedPayload(t *testing.T) {
 		}))
 		t.Cleanup(server.Close)
 		client := newTestClient(t, server)
-		_, err := client.Branches(context.Background(), "ppl", "1", "CZ")
+		_, err := client.Branches(context.Background(), carrier.PPL, "1", country.CZ)
 		if !errors.Is(err, ErrInvalidResponse) {
 			t.Fatalf("Branches content type error = %v", err)
 		}
@@ -469,7 +472,7 @@ func TestBranchesSkipsBranchesWithoutUsableIdentity(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	client := newTestClient(t, server)
-	branches, err := client.Branches(context.Background(), "ppl", "1", "CZ")
+	branches, err := client.Branches(context.Background(), carrier.PPL, "1", country.CZ)
 	if err != nil {
 		t.Fatalf("Branches: %v", err)
 	}
@@ -488,22 +491,29 @@ func TestBranchesRejectsUnsafeQueryBeforeNetwork(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	client := newTestClient(t, server)
-	queries := [][3]string{
-		{"", "1", "CZ"},
-		{"../ppl", "1", "CZ"},
-		{"PPL Upper", "1", "CZ"},
-		{"ppl", "", "CZ"},
-		{"ppl", "1/2", "CZ"},
-		{"ppl", strings.Repeat("1", 17), "CZ"},
-		{"ppl", "1", ""},
-		{"ppl", "1", "cz"},
-		{"ppl", "1", "CZE"},
+	queries := []struct {
+		carrier carrier.Code
+		service string
+		country country.Code
+	}{
+		{"", "1", country.CZ},
+		{"../ppl", "1", country.CZ},
+		{"PPL Upper", "1", country.CZ},
+		{carrier.PPL, "", country.CZ},
+		{carrier.PPL, "1/2", country.CZ},
+		{carrier.PPL, strings.Repeat("1", 17), country.CZ},
+		{carrier.PPL, "1", ""},
+		{carrier.PPL, "1", "cz"},
+		{carrier.PPL, "1", "CZE"},
 	}
 	for _, query := range queries {
 		if _, err := client.Branches(
-			context.Background(), query[0], query[1], query[2],
+			context.Background(), query.carrier, query.service, query.country,
 		); !errors.Is(err, ErrInvalidRequest) {
-			t.Fatalf("Branches(%q, %q, %q) error = %v", query[0], query[1], query[2], err)
+			t.Fatalf(
+				"Branches(%q, %q, %q) error = %v",
+				query.carrier, query.service, query.country, err,
+			)
 		}
 	}
 	if hits.Load() != 0 {
@@ -530,7 +540,7 @@ func TestClientDoesNotFollowRedirectsOrReplayCookies(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	client := newTestClient(t, server)
-	_, err := client.Branches(context.Background(), "ppl", "1", "CZ")
+	_, err := client.Branches(context.Background(), carrier.PPL, "1", country.CZ)
 	if !errors.Is(err, ErrInvalidResponse) || targetHits.Load() != 0 {
 		t.Fatalf("redirect branches = %v, target hits=%d", err, targetHits.Load())
 	}
@@ -539,13 +549,16 @@ func TestClientDoesNotFollowRedirectsOrReplayCookies(t *testing.T) {
 func TestBranchesSelectedCarriersUseCurrentRoute(t *testing.T) {
 	t.Parallel()
 
-	for _, carrier := range []string{"dpd", "dpdcz", "dpdsk", "cp", "ceskaposta", "balikovna", "ppl", "gls", "intime"} {
-		t.Run(carrier, func(t *testing.T) {
+	for _, carrierCode := range []carrier.Code{
+		carrier.DPD, carrier.DPDCZ, carrier.DPDSK, carrier.CP, carrier.CESKAPOSTA,
+		carrier.BALIKOVNA, carrier.PPL, carrier.GLS, carrier.INTIME,
+	} {
+		t.Run(carrierCode.String(), func(t *testing.T) {
 			t.Parallel()
 			server := httptest.NewServer(http.HandlerFunc(func(
 				response http.ResponseWriter, request *http.Request,
 			) {
-				want := "/" + carrier + "/branches/service/1/country/CZ"
+				want := "/" + carrierCode.String() + "/branches/service/1/country/CZ"
 				if request.Method != http.MethodGet || request.URL.Path != want {
 					t.Errorf("BRANCHES = %s %s, want GET %s", request.Method, request.URL.Path, want)
 				}
@@ -557,7 +570,7 @@ func TestBranchesSelectedCarriersUseCurrentRoute(t *testing.T) {
 			}))
 			t.Cleanup(server.Close)
 			client := newTestClient(t, server)
-			points, err := client.Branches(t.Context(), carrier, "1", "CZ")
+			points, err := client.Branches(t.Context(), carrierCode, "1", country.CZ)
 			if err != nil || len(points) != 1 || points[0].ID != "12345" {
 				t.Fatalf("BRANCHES = %#v, %v", points, err)
 			}
@@ -611,7 +624,7 @@ func TestBranchCoordinatesPreserveValidPairsAndTolerateMissingGPS(t *testing.T) 
 			}))
 			t.Cleanup(server.Close)
 			client := newTestClient(t, server)
-			branches, err := client.Branches(t.Context(), CarrierPPL, "1", "CZ")
+			branches, err := client.Branches(t.Context(), carrier.PPL, "1", country.CZ)
 			if err != nil || len(branches) != 1 {
 				t.Fatalf("Branches = %#v, %v; missing GPS must retain the branch", branches, err)
 			}

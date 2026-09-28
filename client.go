@@ -32,6 +32,9 @@ import (
 	"sync"
 	"time"
 	"unicode/utf8"
+
+	"github.com/m1chlcz/balikobot-go/carrier"
+	"github.com/m1chlcz/balikobot-go/country"
 )
 
 const (
@@ -63,7 +66,6 @@ const (
 	minRetryAfterSeconds   = 1
 	maxRetryAfterSeconds   = int(time.Hour / time.Second)
 	minorUnitsPerCurrency  = 100
-	currencyCodeLength     = 3
 	decimalExponentLimit   = 64
 	trackReferenceModulus  = 10_000_000_000
 	pickupPackageLimit     = 10_000
@@ -75,20 +77,10 @@ const (
 	labelQueryZPL          = "zpl=1"
 	pdfMagicPrefix         = "%PDF-"
 	zplMagicPrefix         = "^X"
-	// CarrierZasilkovna is the Zásilkovna carrier code.
-	CarrierZasilkovna = "zasilkovna"
-	// CarrierDPD is the DPD carrier code.
-	CarrierDPD = "dpd"
-	// CarrierDPDCZ is the DPD Czech Republic carrier code.
-	CarrierDPDCZ = "dpdcz"
-	// CarrierPPL is the PPL carrier code.
-	CarrierPPL = "ppl"
 )
 
 var (
-	carrierPattern  = regexp.MustCompile(`^[a-z0-9]{2,32}$`)
 	servicePattern  = regexp.MustCompile(`^[A-Za-z0-9]{1,16}$`)
-	countryPattern  = regexp.MustCompile(`^[A-Z]{2}$`)
 	branchIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
 	eidPattern      = regexp.MustCompile(`^[A-Za-z0-9-]{8,` + strconv.Itoa(referenceLimit) + `}$`)
 	trackIDPattern  = regexp.MustCompile(`^-?[0-9]{1,3}(\.[0-9]{1,2})?$`)
@@ -399,7 +391,7 @@ type Branch struct {
 	Zip string
 	// Country is the ISO 3166-1 alpha-2 country code. It can be empty when
 	// the provider omits it for a domestic branch.
-	Country string
+	Country country.Code
 	// Latitude is the GPS latitude when the provider sent a valid pair.
 	Latitude *float64
 	// Longitude is the GPS longitude when the provider sent a valid pair.
@@ -558,17 +550,17 @@ func (id *branchID) UnmarshalJSON(raw []byte) error {
 // with a client-side country filter.
 func (client *Client) Branches(
 	ctx context.Context,
-	carrier string,
+	carrierCode carrier.Code,
 	service string,
-	country string,
+	countryCode country.Code,
 ) ([]Branch, error) {
 	if client == nil || client.client == nil ||
-		!carrierPattern.MatchString(carrier) ||
+		!carrierCode.Valid() ||
 		!servicePattern.MatchString(service) ||
-		!countryPattern.MatchString(country) {
+		!countryCode.Valid() {
 		return nil, ErrInvalidRequest
 	}
-	path, filterCountry := branchesPath(carrier, service, country)
+	path, filterCountry := branchesPath(carrierCode, service, countryCode)
 	response, err := client.request(ctx, http.MethodGet, path, nil)
 	if err != nil {
 		return nil, ErrUnavailable
@@ -603,7 +595,7 @@ func (client *Client) Branches(
 		if !ok {
 			continue
 		}
-		if filterCountry && branch.Country != "" && branch.Country != country {
+		if filterCountry && branch.Country != "" && branch.Country != countryCode {
 			continue
 		}
 		branches = append(branches, branch)
@@ -611,16 +603,18 @@ func (client *Client) Branches(
 	return branches, nil
 }
 
-func branchesPath(carrier, service, country string) (string, bool) {
-	switch carrier {
-	case "ppl", "dpd", "dpdcz", "dpdsk", "geis", "gls", "intime":
-		return "/" + carrier + "/branches/service/" + service + "/country/" + country, false
-	case "cp", "ceskaposta", "balikovna":
-		return "/" + carrier + "/branches/service/" + service + "/country/" + country, true
-	case CarrierZasilkovna:
-		return "/" + carrier + "/branches/country/" + country, false
+func branchesPath(carrierCode carrier.Code, service string, countryCode country.Code) (string, bool) {
+	path := "/" + string(carrierCode) + "/branches/service/" + service
+	switch carrierCode {
+	case carrier.PPL, carrier.DPD, carrier.DPDCZ, carrier.DPDSK,
+		carrier.GEIS, carrier.GLS, carrier.INTIME:
+		return path + "/country/" + string(countryCode), false
+	case carrier.CP, carrier.CESKAPOSTA, carrier.BALIKOVNA:
+		return path + "/country/" + string(countryCode), true
+	case carrier.ZASILKOVNA:
+		return "/" + string(carrierCode) + "/branches/country/" + string(countryCode), false
 	default:
-		return "/" + carrier + "/branches/service/" + service, true
+		return path, true
 	}
 }
 
@@ -631,7 +625,7 @@ func sanitizeBranch(wire branchWire) (Branch, bool) {
 		Street:  wire.Street,
 		City:    wire.City,
 		Zip:     wire.Zip,
-		Country: wire.Country,
+		Country: country.Code(wire.Country),
 	}
 	switch {
 	case wire.BranchID.set:
@@ -653,7 +647,7 @@ func sanitizeBranch(wire branchWire) (Branch, bool) {
 	if branch.Name == "" {
 		return Branch{}, false
 	}
-	if branch.Country != "" && !countryPattern.MatchString(branch.Country) {
+	if branch.Country != "" && !branch.Country.Valid() {
 		return Branch{}, false
 	}
 	branch.Latitude, branch.Longitude = branchCoordinates(wire)

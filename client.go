@@ -48,6 +48,8 @@ const (
 
 	maxResponseBytesLimit  = 1 << 30
 	labelResponseLimit     = 4 << 20
+	labelsPackageLimit     = 1_000
+	trackingBatchLimit     = 1_000
 	dialTimeout            = 3 * time.Second
 	readBufferSize         = 32 << 10
 	branchFieldLimit       = 200
@@ -59,6 +61,7 @@ const (
 	contentTypeJSON        = "application/json"
 	mimeTypePDF            = "application/pdf"
 	mimeTypeZPL            = "application/zpl"
+	mimeTypeZIP            = "application/zip"
 	schemeHTTP             = "http"
 	schemeHTTPS            = "https"
 	nullLiteral            = "null"
@@ -79,6 +82,7 @@ const (
 	labelQueryZPL          = "zpl=1"
 	pdfMagicPrefix         = "%PDF-"
 	zplMagicPrefix         = "^X"
+	zipMagicPrefix         = "PK"
 )
 
 var (

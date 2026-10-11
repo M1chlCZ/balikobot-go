@@ -2,7 +2,8 @@
 
 A zero-dependency Go client for the Balíkobot shipping API v2. The module uses
 only the Go standard library and the `balikobot` package. The client covers
-branches, packages, labels, tracking, pickup orders and account capabilities.
+branches, packages, labels, tracking, pickup orders and account capabilities,
+including batch label export and tracking webhook parsing.
 
 ## Install
 
@@ -128,9 +129,11 @@ every call to use the new types, for example
 | `AddPackage` | `POST /{carrier}/add` | Creates one package. ADD is idempotent on `eid` |
 | `Overview` | `GET /{carrier}/overview` | Lists the packages that ORDER has not closed |
 | `Labels` | `POST /{carrier}/labels` | Gets a fresh label URL for one package |
+| `DownloadBatchLabels` | `POST /{carrier}/labels` | Gets and downloads the labels of one or more packages |
 | `OrderViewLabels` | `GET /{carrier}/orderview/{order_id}` | Gets the label URL of a closed order |
 | `DownloadLabel` | `GET` the label URL | Downloads the label body |
 | `TrackStatus` | `POST /{carrier}/trackstatus` | Reads the tracking status of one package |
+| `ParseTrackingNotifications` | none | Parses a tracking webhook body into typed notifications |
 | `OrderBatch` | `POST /{carrier}/order` | Hands one package to the carrier batch |
 | `DropPackage` | `POST /{carrier}/drop` | Removes one package before ORDER |
 | `OrderPickup` | `POST /{carrier}/orderpickup` | Books one physical collection |
@@ -171,9 +174,10 @@ The client sends no automatic retry. The caller controls the retry policy.
 ## Response limits
 
 The client reads every JSON body with a hard limit of 8 MiB. Set
-`Config.MaxResponseBytes` to change the limit. Label downloads use a fixed
-limit of 4 MiB. The client refuses redirects. It compares the response
-`Content-Type` with the expected media type before it decodes the body.
+`Config.MaxResponseBytes` to change the limit. Label and batch label
+downloads use a fixed limit of 4 MiB. The client refuses redirects. It
+compares the response `Content-Type` with the expected media type before it
+decodes the body.
 
 ## Account mode
 
@@ -189,6 +193,47 @@ The client accepts label URLs only from the Balíkobot label hosts, or from the
 base URL origin for a loopback test server. Set `Config.LabelHosts` to replace
 the default allowlist with other hosts. A leading dot selects a subdomain
 suffix match; it does not match the bare domain.
+
+## Batch labels
+
+`DownloadBatchLabels` requests fresh labels for one or more packages and
+downloads the label body in one step. A single package id returns a PDF or ZPL
+body; several package ids return a ZIP archive. The method uses the label host
+allowlist and the fixed 4 MiB label limit, and it accepts at most 1000 package
+ids per request.
+
+```go
+labels, mediaType, err := client.DownloadBatchLabels(ctx, carrier.PPL, packageIDs)
+if err != nil {
+	return err
+}
+response.Header().Set("Content-Type", mediaType)
+if _, err = response.Write(labels); err != nil {
+	return err
+}
+```
+
+## Tracking webhooks
+
+`ParseTrackingNotifications` turns the body of a Balíkobot tracking webhook
+into typed notifications. It accepts a single JSON object or an array of
+objects. Every entry must identify the package through `package_id`, `eid` or
+`carrier_id` and carry a decimal `status_id` or `status_id_v2` together with a
+status description in `name` or `status_text`. A malformed body or a missing
+required field returns `ErrInvalidResponse`.
+
+```go
+notifications, err := balikobot.ParseTrackingNotifications(body)
+if err != nil {
+	return err
+}
+for _, notification := range notifications {
+	log.Printf(
+		"%s: %s %s",
+		notification.CarrierID, notification.StatusID, notification.StatusText,
+	)
+}
+```
 
 ## Development
 

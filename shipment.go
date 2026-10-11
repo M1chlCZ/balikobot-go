@@ -431,9 +431,56 @@ func (client *Client) Labels(
 		!validPackageID(packageID) {
 		return "", ErrInvalidRequest
 	}
+	return client.labelsURL(ctx, carrierCode, []string{packageID})
+}
+
+// DownloadBatchLabels requests fresh labels of one or more packages that have
+// not entered ORDER yet and downloads them in one step. A single package id
+// returns a PDF or ZPL body; several package ids return a ZIP archive. The
+// request accepts at most labelsPackageLimit package ids. The label URL must
+// pass the client label allowlist, and the body is read once with the fixed
+// label byte limit. The returned body is a copy owned by the caller.
+func (client *Client) DownloadBatchLabels(
+	ctx context.Context,
+	carrierCode carrier.Code,
+	packageIDs []string,
+) ([]byte, string, error) {
+	if client == nil || client.client == nil {
+		return nil, "", ErrInvalidRequest
+	}
+	labelURL, multiple, err := client.batchLabelURL(ctx, carrierCode, packageIDs)
+	if err != nil {
+		return nil, "", err
+	}
+	return client.fetchLabelBody(ctx, labelURL, multiple)
+}
+
+func (client *Client) batchLabelURL(
+	ctx context.Context,
+	carrierCode carrier.Code,
+	packageIDs []string,
+) (string, bool, error) {
+	if !carrierCode.Valid() ||
+		len(packageIDs) == 0 || len(packageIDs) > labelsPackageLimit {
+		return "", false, ErrInvalidRequest
+	}
+	for _, packageID := range packageIDs {
+		if !validPackageID(packageID) {
+			return "", false, ErrInvalidRequest
+		}
+	}
+	labelURL, err := client.labelsURL(ctx, carrierCode, packageIDs)
+	return labelURL, len(packageIDs) > 1, err
+}
+
+func (client *Client) labelsURL(
+	ctx context.Context,
+	carrierCode carrier.Code,
+	packageIDs []string,
+) (string, error) {
 	response, err := client.request(
 		ctx, http.MethodPost, "/"+string(carrierCode)+"/labels",
-		map[string]any{fieldPackageIDs: []string{packageID}},
+		map[string]any{fieldPackageIDs: packageIDs},
 	)
 	if err != nil {
 		return "", &TransientError{}
@@ -534,7 +581,18 @@ func (client *Client) DownloadLabel(
 	ctx context.Context,
 	labelURL string,
 ) ([]byte, string, error) {
-	if client == nil || client.client == nil || !validLabelURL(client, labelURL) {
+	if client == nil || client.client == nil {
+		return nil, "", ErrInvalidRequest
+	}
+	return client.fetchLabelBody(ctx, labelURL, false)
+}
+
+func (client *Client) fetchLabelBody(
+	ctx context.Context,
+	labelURL string,
+	multiple bool,
+) ([]byte, string, error) {
+	if !validLabelURL(client, labelURL) {
 		return nil, "", ErrInvalidRequest
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, labelURL, nil)
@@ -567,22 +625,23 @@ func (client *Client) DownloadLabel(
 		}
 		return nil, "", &TransientError{}
 	}
-	if len(body) == 0 {
-		return nil, "", ErrInvalidResponse
-	}
-	switch mediaType {
-	case mimeTypePDF:
-		if !strings.HasPrefix(string(body), pdfMagicPrefix) {
-			return nil, "", ErrInvalidResponse
-		}
-	case mimeTypeZPL:
-		if !strings.HasPrefix(string(body), zplMagicPrefix) {
-			return nil, "", ErrInvalidResponse
-		}
-	default:
+	if len(body) == 0 || !validLabelBody(mediaType, body, multiple) {
 		return nil, "", ErrInvalidResponse
 	}
 	return append([]byte(nil), body...), mediaType, nil
+}
+
+func validLabelBody(mediaType string, body []byte, multiple bool) bool {
+	switch mediaType {
+	case mimeTypePDF:
+		return !multiple && strings.HasPrefix(string(body), pdfMagicPrefix)
+	case mimeTypeZPL:
+		return !multiple && strings.HasPrefix(string(body), zplMagicPrefix)
+	case mimeTypeZIP:
+		return multiple && strings.HasPrefix(string(body), zipMagicPrefix)
+	default:
+		return false
+	}
 }
 
 func validPackageID(packageID string) bool {

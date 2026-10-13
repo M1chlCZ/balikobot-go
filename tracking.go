@@ -66,7 +66,7 @@ type dropResponse struct {
 // returns the raw provider status. The documented response wraps per-package
 // entries in a packages array. A package entry or HTTP answer with status 404
 // means that the carrier has no tracking data yet and maps to ErrNotFound.
-// The call is read-only, so transport failures are safe to retry.
+// The call is read-only, so Config.RetryPolicy applies to it.
 func (client *Client) TrackStatus(
 	ctx context.Context,
 	carrierCode carrier.Code,
@@ -77,6 +77,16 @@ func (client *Client) TrackStatus(
 		!validPackageID(carrierID) {
 		return TrackStatusResult{}, ErrInvalidRequest
 	}
+	return retryRead(client, ctx, func(ctx context.Context) (TrackStatusResult, error) {
+		return client.trackStatus(ctx, carrierCode, carrierID)
+	})
+}
+
+func (client *Client) trackStatus(
+	ctx context.Context,
+	carrierCode carrier.Code,
+	carrierID string,
+) (TrackStatusResult, error) {
 	response, err := client.request(
 		ctx, http.MethodPost, "/"+string(carrierCode)+"/trackstatus",
 		map[string]any{"carrier_ids": []string{carrierID}},

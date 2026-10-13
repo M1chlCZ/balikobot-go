@@ -261,11 +261,16 @@ func (response *codCapabilityResponse) statusValue() (int, bool) {
 	return response.Status.value, response.Status.set
 }
 
-// WhoAmI calls the WHOAMI method and returns the account information.
+// WhoAmI calls the WHOAMI method and returns the account information. The
+// call is read-only, so Config.RetryPolicy applies to it.
 func (client *Client) WhoAmI(ctx context.Context) (WhoAmI, error) {
 	if client == nil || client.client == nil {
 		return WhoAmI{}, ErrInvalidRequest
 	}
+	return retryRead(client, ctx, client.whoAmI)
+}
+
+func (client *Client) whoAmI(ctx context.Context) (WhoAmI, error) {
 	var wire whoAmIWire
 	if err := client.capabilityGET(ctx, "/info/whoami", &wire, false); err != nil {
 		return WhoAmI{}, err
@@ -286,11 +291,18 @@ func (client *Client) WhoAmI(ctx context.Context) (WhoAmI, error) {
 
 // ActivatedServices calls the ACTIVATEDSERVICES method of one carrier and
 // returns the normalized activated services. When the provider reports that
-// parcel shipping is inactive, the service list is empty.
+// parcel shipping is inactive, the service list is empty. The call is
+// read-only, so Config.RetryPolicy applies to it.
 func (client *Client) ActivatedServices(ctx context.Context, carrierCode carrier.Code) (ActivatedServices, error) {
 	if client == nil || client.client == nil || !carrierCode.Valid() {
 		return ActivatedServices{}, ErrInvalidRequest
 	}
+	return retryRead(client, ctx, func(ctx context.Context) (ActivatedServices, error) {
+		return client.activatedServices(ctx, carrierCode)
+	})
+}
+
+func (client *Client) activatedServices(ctx context.Context, carrierCode carrier.Code) (ActivatedServices, error) {
 	var wire activatedServicesCapabilityResponse
 	if err := client.capabilityGET(
 		ctx, "/"+string(carrierCode)+"/activatedservices", &wire, false,
@@ -306,11 +318,18 @@ func (client *Client) ActivatedServices(ctx context.Context, carrierCode carrier
 
 // Countries calls the COUNTRIES4SERVICE method of one carrier and returns the
 // supported destination countries per service. Every country sent by the
-// provider is kept.
+// provider is kept. The call is read-only, so Config.RetryPolicy applies to
+// it.
 func (client *Client) Countries(ctx context.Context, carrierCode carrier.Code) ([]ServiceCountries, error) {
 	if client == nil || client.client == nil || !carrierCode.Valid() {
 		return nil, ErrInvalidRequest
 	}
+	return retryRead(client, ctx, func(ctx context.Context) ([]ServiceCountries, error) {
+		return client.countries(ctx, carrierCode)
+	})
+}
+
+func (client *Client) countries(ctx context.Context, carrierCode carrier.Code) ([]ServiceCountries, error) {
 	var wire countriesCapabilityResponse
 	if err := client.capabilityGET(
 		ctx, "/"+string(carrierCode)+"/countries4service", &wire, false,
@@ -341,11 +360,17 @@ func (client *Client) Countries(ctx context.Context, carrierCode carrier.Code) (
 // COD calls the COD4SERVICES method of one carrier and returns the normalized
 // cash-on-delivery destinations per service. Every country sent by the
 // provider is kept. A carrier without the optional dictionary returns an empty
-// list.
+// list. The call is read-only, so Config.RetryPolicy applies to it.
 func (client *Client) COD(ctx context.Context, carrierCode carrier.Code) ([]ServiceCOD, error) {
 	if client == nil || client.client == nil || !carrierCode.Valid() {
 		return nil, ErrInvalidRequest
 	}
+	return retryRead(client, ctx, func(ctx context.Context) ([]ServiceCOD, error) {
+		return client.cod(ctx, carrierCode)
+	})
+}
+
+func (client *Client) cod(ctx context.Context, carrierCode carrier.Code) ([]ServiceCOD, error) {
 	var wire codCapabilityResponse
 	if err := client.capabilityGET(
 		ctx, "/"+string(carrierCode)+"/cod4services", &wire, true,
@@ -378,7 +403,7 @@ func (client *Client) COD(ctx context.Context, carrierCode carrier.Code) ([]Serv
 // account; an explicit empty scope discovers none. At most one scope slice may
 // be passed, and every requested carrier must belong to the account. The
 // returned destinations are restricted to EU countries, matching the reference
-// integration.
+// integration. The call is read-only, so Config.RetryPolicy applies to it.
 func (client *Client) CarrierCapabilities(
 	ctx context.Context,
 	carrierScope ...[]carrier.Code,
@@ -386,6 +411,15 @@ func (client *Client) CarrierCapabilities(
 	if client == nil || client.client == nil {
 		return nil, ErrInvalidRequest
 	}
+	return retryRead(client, ctx, func(ctx context.Context) ([]Carrier, error) {
+		return client.carrierCapabilities(ctx, carrierScope...)
+	})
+}
+
+func (client *Client) carrierCapabilities(
+	ctx context.Context,
+	carrierScope ...[]carrier.Code,
+) ([]Carrier, error) {
 	whoami, err := client.verifiedWhoAmI(ctx, false)
 	if err != nil {
 		return nil, err

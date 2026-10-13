@@ -3,7 +3,8 @@
 A zero-dependency Go client for the Balíkobot shipping API v2. The module uses
 only the Go standard library and the `balikobot` package. The client covers
 branches, packages, labels, tracking, pickup orders and account capabilities,
-including batch label export and tracking webhook parsing.
+including batch and streaming label export, tracking webhook parsing, an
+optional in-memory discovery cache and opt-in retries for read-only calls.
 
 ## Install
 
@@ -130,8 +131,10 @@ every call to use the new types, for example
 | `Overview` | `GET /{carrier}/overview` | Lists the packages that ORDER has not closed |
 | `Labels` | `POST /{carrier}/labels` | Gets a fresh label URL for one package |
 | `DownloadBatchLabels` | `POST /{carrier}/labels` | Gets and downloads the labels of one or more packages |
+| `DownloadBatchLabelsTo` | `POST /{carrier}/labels` | Streams the labels of one or more packages to an `io.Writer` |
 | `OrderViewLabels` | `GET /{carrier}/orderview/{order_id}` | Gets the label URL of a closed order |
 | `DownloadLabel` | `GET` the label URL | Downloads the label body |
+| `DownloadLabelTo` | `GET` the label URL | Streams the label body to an `io.Writer` |
 | `TrackStatus` | `POST /{carrier}/trackstatus` | Reads the tracking status of one package |
 | `ParseTrackingNotifications` | none | Parses a tracking webhook body into typed notifications |
 | `OrderBatch` | `POST /{carrier}/order` | Hands one package to the carrier batch |
@@ -169,15 +172,74 @@ if errors.As(err, &transient) && transient.RetryAfter > 0 {
 }
 ```
 
-The client sends no automatic retry. The caller controls the retry policy.
+By default the client sends no automatic retry: one call is one HTTP attempt.
+`Config.RetryPolicy` opts read-only calls into bounded automatic retries, and
+mutating calls are never retried automatically. See [Retries](#retries).
+
+## Retries
+
+Every call performs exactly one HTTP attempt by default. Set
+`Config.RetryPolicy` to retry read-only calls:
+
+```go
+client, err := balikobot.New(balikobot.Config{
+	User:   "api-user",
+	APIKey: "api-key",
+	RetryPolicy: balikobot.RetryPolicy{
+		MaxAttempts: 4,
+		BaseBackoff: 200 * time.Millisecond,
+	},
+})
+```
+
+- `MaxAttempts` is the total number of attempts, including the first. Values
+  below two disable retries.
+- `BaseBackoff` is the delay before the first retry. Each following retry
+  doubles the delay, capped at 30 seconds. Zero selects
+  `DefaultRetryBackoff`. `Jitter` spreads every delay over a random interval
+  from zero to the computed delay.
+- A provider `Retry-After` hint (`TransientError.RetryAfter`) is always the
+  floor of the next delay.
+
+The policy applies only to read-only calls: `Branches`, `Overview`, `Labels`,
+`OrderViewLabels`, `TrackStatus`, `WhoAmI`, `ActivatedServices`, `Countries`,
+`COD`, `CarrierCapabilities` and the label downloads. `AddPackage`,
+`OrderBatch`, `DropPackage` and `OrderPickup` always perform exactly one
+attempt, so an ambiguous mutation is never duplicated automatically. A
+streaming label download retries only while no byte has reached the writer;
+after a partial write the call fails and the caller decides how to recover.
 
 ## Response limits
 
 The client reads every JSON body with a hard limit of 8 MiB. Set
 `Config.MaxResponseBytes` to change the limit. Label and batch label
-downloads use a fixed limit of 4 MiB. The client refuses redirects. It
-compares the response `Content-Type` with the expected media type before it
-decodes the body.
+downloads, buffered or streamed, use a fixed limit of 4 MiB. The client
+refuses redirects. It compares the response `Content-Type` with the expected
+media type before it decodes the body.
+
+## Capability cache
+
+`DiscoveryCache` is an optional in-memory TTL cache with single-flight
+refresh de-duplication for discovery results. Use it explicitly around
+`CarrierCapabilities` or `WhoAmI`; the client never enables a cache on its
+own:
+
+```go
+cache := balikobot.NewCapabilityCache(5 * time.Minute)
+carriers, err := cache.Get(ctx, "account", func(ctx context.Context) ([]balikobot.Carrier, error) {
+	return client.CarrierCapabilities(ctx)
+})
+```
+
+`Get` runs the refresh only on a miss or an expired entry, and concurrent
+Gets for the same key share one refresh. `Set` stores a value directly and
+`Invalidate` drops an entry. The cache is a per-process accelerator only: two
+processes keep separate entries, so it cannot replace cross-process
+persistence. A database-backed or otherwise durable shared cache must stay
+the authoritative source, with the in-memory cache as a read-through layer in
+front of it. A failed refresh is not stored. Cached values are shared between
+Gets, so treat the returned slices and maps as read-only. `NewWhoAmICache`
+and `NewDiscoveryCache[T]` cover other discovery results.
 
 ## Account mode
 
@@ -212,6 +274,28 @@ if _, err = response.Write(labels); err != nil {
 	return err
 }
 ```
+
+## Label streaming
+
+`DownloadLabelTo` and `DownloadBatchLabelsTo` fetch a label URL and stream the
+validated body to an `io.Writer` without buffering it in memory:
+
+```go
+mediaType, err := client.DownloadBatchLabelsTo(ctx, carrier.PPL, packageIDs, response)
+if err != nil {
+	return err
+}
+response.Header().Set("Content-Type", mediaType)
+```
+
+They keep every safety property of the buffered calls: the label host
+allowlist, the fixed 4 MiB label limit, the media-type check and the PDF, ZPL
+and ZIP magic prefix check. The prefix is validated before the first byte
+reaches the writer, but a cap violation or a mid-stream failure can leave
+partial output, so use the buffered calls when the output must be
+all-or-nothing. `DownloadBatchLabelsTo` returns the validated media type;
+`DownloadLabelTo` returns only the error, because a single label is always a
+PDF or ZPL body. An error returned by the writer is returned unchanged.
 
 ## Tracking webhooks
 

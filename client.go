@@ -3,9 +3,15 @@
 //
 // The client covers the documented endpoints for carrier branches, packages,
 // labels, tracking, pickup orders and account capabilities. It performs no
-// logging, caching, persistence or automatic retries. Every method maps the
+// logging or persistence, and every call performs exactly one HTTP attempt by
+// default. Config.RetryPolicy opts read-only calls into automatic retries
+// while mutating calls never retry automatically. Every method maps the
 // provider answer to a small set of sentinel errors, so the caller decides how
 // to react to a retryable outage or a permanent rejection.
+//
+// DiscoveryCache is an explicit in-memory accelerator for carrier and account
+// discovery results. It is never enabled implicitly, and a durable
+// cross-process store stays the authoritative source.
 //
 // Requests use HTTP Basic authentication: Config.User is the API user and
 // Config.APIKey is the API password. All JSON responses are read with a hard
@@ -170,6 +176,11 @@ type Config struct {
 	// live_account flag to equal this value. A failed check blocks the write
 	// before it is sent. When nil, no account-mode check is performed.
 	LiveAccount *bool
+	// RetryPolicy opts read-only calls into automatic retries. The zero value
+	// keeps the default behavior of exactly one HTTP attempt per call. The
+	// policy never applies to AddPackage, OrderBatch, DropPackage or
+	// OrderPickup.
+	RetryPolicy RetryPolicy
 }
 
 // Client is a Balíkobot API v2 client. Create it with New. Every method is
@@ -183,6 +194,8 @@ type Client struct {
 	loopback             bool
 	maxResponseBytes     int
 	labelHosts           []string
+	retryPolicy          RetryPolicy
+	sleep                func(context.Context, time.Duration) error
 	liveAccountExpected  *bool
 	accountModeMu        sync.Mutex
 	accountVerifiedAt    time.Time
@@ -209,6 +222,12 @@ func New(config Config) (*Client, error) {
 		return nil, errors.New(
 			"balikobot: invalid configuration: response limit must be between 0 and 1073741824 bytes",
 		)
+	}
+	if config.RetryPolicy.MaxAttempts < 0 {
+		return nil, errors.New("balikobot: invalid configuration: retry attempts must not be negative")
+	}
+	if config.RetryPolicy.BaseBackoff < 0 {
+		return nil, errors.New("balikobot: invalid configuration: retry backoff must not be negative")
 	}
 	baseURL := strings.TrimSpace(config.BaseURL)
 	if baseURL == "" {
@@ -241,6 +260,8 @@ func New(config Config) (*Client, error) {
 		loopback:             loopback,
 		maxResponseBytes:     maxResponseBytes,
 		labelHosts:           labelHosts,
+		retryPolicy:          config.RetryPolicy,
+		sleep:                sleepContext,
 		liveAccountExpected:  config.LiveAccount,
 		closeIdleConnections: closeIdleConnections,
 	}, nil
@@ -563,7 +584,8 @@ func (id *branchID) UnmarshalJSON(raw []byte) error {
 // service in one country. The route depends on the carrier: the selected
 // carriers use the combined service and country segments, Zásilkovna uses the
 // country-only route, and the remaining carriers use the service-only route
-// with a client-side country filter.
+// with a client-side country filter. The call is read-only, so Config.RetryPolicy
+// applies to it.
 func (client *Client) Branches(
 	ctx context.Context,
 	carrierCode carrier.Code,
@@ -576,6 +598,17 @@ func (client *Client) Branches(
 		!countryCode.Valid() {
 		return nil, ErrInvalidRequest
 	}
+	return retryRead(client, ctx, func(ctx context.Context) ([]Branch, error) {
+		return client.branches(ctx, carrierCode, service, countryCode)
+	})
+}
+
+func (client *Client) branches(
+	ctx context.Context,
+	carrierCode carrier.Code,
+	service string,
+	countryCode country.Code,
+) ([]Branch, error) {
 	path, filterCountry := branchesPath(carrierCode, service, countryCode)
 	response, err := client.request(ctx, http.MethodGet, path, nil)
 	if err != nil {

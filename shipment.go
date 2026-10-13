@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"mime"
 	"net"
 	"net/http"
@@ -130,6 +131,11 @@ type orderViewResponse struct {
 	OrderID    string          `json:"order_id"`
 	PackageIDs []packageID     `json:"package_ids"`
 	LabelsURL  string          `json:"labels_url"`
+}
+
+type labelBody struct {
+	body      []byte
+	mediaType string
 }
 
 type packageID struct {
@@ -360,6 +366,7 @@ func (client *Client) decodeAddPackage(
 // that have not yet been closed by ORDER. matchEID names the single entry
 // whose integrity is required for reconciliation: a malformed entry with a
 // different EID is skipped, while a malformed matching entry fails the call.
+// The call is read-only, so Config.RetryPolicy applies to it.
 func (client *Client) Overview(
 	ctx context.Context,
 	carrierCode carrier.Code,
@@ -369,6 +376,16 @@ func (client *Client) Overview(
 		!carrierCode.Valid() {
 		return nil, ErrInvalidRequest
 	}
+	return retryRead(client, ctx, func(ctx context.Context) ([]OverviewPackage, error) {
+		return client.overview(ctx, carrierCode, matchEID)
+	})
+}
+
+func (client *Client) overview(
+	ctx context.Context,
+	carrierCode carrier.Code,
+	matchEID string,
+) ([]OverviewPackage, error) {
 	response, err := client.request(ctx, http.MethodGet, "/"+string(carrierCode)+"/overview", nil)
 	if err != nil {
 		return nil, dispatchError(err)
@@ -420,7 +437,8 @@ func (client *Client) Overview(
 }
 
 // Labels asks for a fresh aggregate label URL of one package that has not
-// entered ORDER yet.
+// entered ORDER yet. The lookup is read-only, so Config.RetryPolicy applies
+// to it.
 func (client *Client) Labels(
 	ctx context.Context,
 	carrierCode carrier.Code,
@@ -431,7 +449,9 @@ func (client *Client) Labels(
 		!validPackageID(packageID) {
 		return "", ErrInvalidRequest
 	}
-	return client.labelsURL(ctx, carrierCode, []string{packageID})
+	return retryRead(client, ctx, func(ctx context.Context) (string, error) {
+		return client.labelsURL(ctx, carrierCode, []string{packageID})
+	})
 }
 
 // DownloadBatchLabels requests fresh labels of one or more packages that have
@@ -439,7 +459,9 @@ func (client *Client) Labels(
 // returns a PDF or ZPL body; several package ids return a ZIP archive. The
 // request accepts at most labelsPackageLimit package ids. The label URL must
 // pass the client label allowlist, and the body is read once with the fixed
-// label byte limit. The returned body is a copy owned by the caller.
+// label byte limit. The returned body is a copy owned by the caller. The
+// lookup and the download are read-only, so Config.RetryPolicy applies to the
+// call.
 func (client *Client) DownloadBatchLabels(
 	ctx context.Context,
 	carrierCode carrier.Code,
@@ -448,9 +470,52 @@ func (client *Client) DownloadBatchLabels(
 	if client == nil || client.client == nil {
 		return nil, "", ErrInvalidRequest
 	}
-	labelURL, multiple, err := client.batchLabelURL(ctx, carrierCode, packageIDs)
+	result, err := retryRead(client, ctx, func(ctx context.Context) (labelBody, error) {
+		return client.downloadBatchLabels(ctx, carrierCode, packageIDs)
+	})
 	if err != nil {
 		return nil, "", err
+	}
+	return result.body, result.mediaType, nil
+}
+
+// DownloadBatchLabelsTo requests fresh labels of one or more packages that
+// have not entered ORDER yet and streams them to the writer. It returns the
+// validated media type: application/pdf or application/zpl for a single
+// package id, application/zip for several package ids. The same safety checks
+// as DownloadBatchLabels apply: the label host allowlist, the declared media
+// type, the matching magic prefix and the fixed 4 MiB label limit. The prefix
+// is validated before the first byte reaches the writer, but a cap violation
+// or a mid-stream failure can leave partial output, so callers that need
+// all-or-nothing output must use DownloadBatchLabels. The lookup and the
+// download are read-only, and Config.RetryPolicy retries them only while no
+// byte has reached the writer.
+func (client *Client) DownloadBatchLabelsTo(
+	ctx context.Context,
+	carrierCode carrier.Code,
+	packageIDs []string,
+	w io.Writer,
+) (string, error) {
+	if client == nil || client.client == nil || w == nil {
+		return "", ErrInvalidRequest
+	}
+	return client.retryStream(ctx, w, func(ctx context.Context, writer io.Writer) (string, error) {
+		labelURL, multiple, err := client.batchLabelURL(ctx, carrierCode, packageIDs)
+		if err != nil {
+			return "", err
+		}
+		return client.streamLabelBody(ctx, labelURL, multiple, writer)
+	})
+}
+
+func (client *Client) downloadBatchLabels(
+	ctx context.Context,
+	carrierCode carrier.Code,
+	packageIDs []string,
+) (labelBody, error) {
+	labelURL, multiple, err := client.batchLabelURL(ctx, carrierCode, packageIDs)
+	if err != nil {
+		return labelBody{}, err
 	}
 	return client.fetchLabelBody(ctx, labelURL, multiple)
 }
@@ -508,7 +573,8 @@ func (client *Client) labelsURL(
 
 // OrderViewLabels retrieves the label URL of an already closed ORDER. The
 // returned URL is accepted only when the response confirms both the requested
-// order id and the membership of the requested package id.
+// order id and the membership of the requested package id. The call is
+// read-only, so Config.RetryPolicy applies to it.
 func (client *Client) OrderViewLabels(
 	ctx context.Context,
 	carrierCode carrier.Code,
@@ -521,6 +587,17 @@ func (client *Client) OrderViewLabels(
 		!validPackageID(packageID) {
 		return "", ErrInvalidRequest
 	}
+	return retryRead(client, ctx, func(ctx context.Context) (string, error) {
+		return client.orderViewLabels(ctx, carrierCode, orderID, packageID)
+	})
+}
+
+func (client *Client) orderViewLabels(
+	ctx context.Context,
+	carrierCode carrier.Code,
+	orderID string,
+	packageID string,
+) (string, error) {
 	response, err := client.request(
 		ctx, http.MethodGet, "/"+string(carrierCode)+"/orderview/"+url.PathEscape(orderID), nil,
 	)
@@ -576,7 +653,8 @@ func labelLookupResponseError(response *http.Response) error {
 // DownloadLabel fetches a provider label URL server-to-server. The body is
 // read once with a hard byte limit and validated against the declared label
 // media type. The URL host must pass the client label allowlist. The returned
-// body is a copy owned by the caller.
+// body is a copy owned by the caller. The fetch is read-only, so
+// Config.RetryPolicy applies to it.
 func (client *Client) DownloadLabel(
 	ctx context.Context,
 	labelURL string,
@@ -584,14 +662,91 @@ func (client *Client) DownloadLabel(
 	if client == nil || client.client == nil {
 		return nil, "", ErrInvalidRequest
 	}
-	return client.fetchLabelBody(ctx, labelURL, false)
+	result, err := retryRead(client, ctx, func(ctx context.Context) (labelBody, error) {
+		return client.fetchLabelBody(ctx, labelURL, false)
+	})
+	if err != nil {
+		return nil, "", err
+	}
+	return result.body, result.mediaType, nil
+}
+
+// DownloadLabelTo fetches a provider label URL server-to-server and streams
+// the body to the writer. The same safety checks as DownloadLabel apply: the
+// URL host must pass the client label allowlist, the declared media type must
+// be application/pdf or application/zpl, the body must start with the
+// matching magic prefix, the body is limited to the fixed 4 MiB label limit,
+// and a failure is classified like the buffered call. The prefix is validated
+// before the first byte reaches the writer, but a cap violation or a
+// mid-stream failure can leave partial output, so callers that need
+// all-or-nothing output must use DownloadLabel. An error returned by the
+// writer is returned unchanged. The fetch is read-only, and
+// Config.RetryPolicy retries it only while no byte has reached the writer.
+func (client *Client) DownloadLabelTo(ctx context.Context, labelURL string, w io.Writer) error {
+	if client == nil || client.client == nil || w == nil {
+		return ErrInvalidRequest
+	}
+	_, err := client.retryStream(ctx, w, func(ctx context.Context, writer io.Writer) (string, error) {
+		return client.streamLabelBody(ctx, labelURL, false, writer)
+	})
+	return err
 }
 
 func (client *Client) fetchLabelBody(
 	ctx context.Context,
 	labelURL string,
 	multiple bool,
-) ([]byte, string, error) {
+) (labelBody, error) {
+	response, mediaType, err := client.openLabelBody(ctx, labelURL)
+	if err != nil {
+		return labelBody{}, err
+	}
+	defer response.Body.Close()
+	body, err := readResponseBody(ctx, response.Body, labelResponseLimit)
+	if err != nil {
+		if errors.Is(err, errResponseLimit) {
+			return labelBody{}, ErrInvalidResponse
+		}
+		return labelBody{}, &TransientError{}
+	}
+	if len(body) == 0 || !validLabelBody(mediaType, body, multiple) {
+		return labelBody{}, ErrInvalidResponse
+	}
+	return labelBody{body: append([]byte(nil), body...), mediaType: mediaType}, nil
+}
+
+func (client *Client) streamLabelBody(
+	ctx context.Context,
+	labelURL string,
+	multiple bool,
+	w io.Writer,
+) (string, error) {
+	response, mediaType, err := client.openLabelBody(ctx, labelURL)
+	if err != nil {
+		return "", err
+	}
+	defer response.Body.Close()
+	prefix, ok := labelPrefix(mediaType, multiple)
+	if !ok {
+		return "", ErrInvalidResponse
+	}
+	if _, err = writeLabelBytes(ctx, response.Body, w, prefix); err != nil {
+		switch {
+		case errors.Is(err, errResponseLimit):
+			return "", ErrInvalidResponse
+		case errors.Is(err, errResponseRead):
+			return "", &TransientError{}
+		default:
+			return "", err
+		}
+	}
+	return mediaType, nil
+}
+
+func (client *Client) openLabelBody(
+	ctx context.Context,
+	labelURL string,
+) (*http.Response, string, error) {
 	if !validLabelURL(client, labelURL) {
 		return nil, "", ErrInvalidRequest
 	}
@@ -603,44 +758,116 @@ func (client *Client) fetchLabelBody(
 	if err != nil {
 		return nil, "", &TransientError{}
 	}
-	defer response.Body.Close()
+	mediaType, err := labelResponseMediaType(response)
+	if err != nil {
+		response.Body.Close()
+		return nil, "", err
+	}
+	return response, mediaType, nil
+}
+
+func labelResponseMediaType(response *http.Response) (string, error) {
 	statusCode := response.StatusCode
 	if statusCode == http.StatusTooManyRequests || statusCode >= http.StatusInternalServerError {
-		return nil, "", &TransientError{}
+		return "", &TransientError{}
 	}
 	if statusCode != http.StatusOK {
 		if statusCode >= http.StatusBadRequest && statusCode < http.StatusInternalServerError {
-			return nil, "", ErrRejected
+			return "", ErrRejected
 		}
-		return nil, "", ErrInvalidResponse
+		return "", ErrInvalidResponse
 	}
 	mediaType, _, err := mime.ParseMediaType(response.Header.Get("Content-Type"))
 	if err != nil {
-		return nil, "", ErrInvalidResponse
+		return "", ErrInvalidResponse
 	}
-	body, err := readResponseBody(ctx, response.Body, labelResponseLimit)
-	if err != nil {
-		if errors.Is(err, errResponseLimit) {
-			return nil, "", ErrInvalidResponse
+	return mediaType, nil
+}
+
+func writeLabelBytes(
+	ctx context.Context,
+	reader io.Reader,
+	writer io.Writer,
+	prefix string,
+) (int64, error) {
+	head := make([]byte, len(prefix))
+	read := 0
+	for read < len(head) {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return 0, errors.Join(errResponseRead, ctxErr)
 		}
-		return nil, "", &TransientError{}
+		count, readErr := reader.Read(head[read:])
+		read += count
+		if readErr == nil {
+			continue
+		}
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return 0, errors.Join(errResponseRead, ctxErr)
+		}
+		if read < len(head) {
+			if errors.Is(readErr, io.EOF) {
+				return 0, ErrInvalidResponse
+			}
+			return 0, errors.Join(errResponseRead, readErr)
+		}
+		if !errors.Is(readErr, io.EOF) {
+			return 0, errors.Join(errResponseRead, readErr)
+		}
+		break
 	}
-	if len(body) == 0 || !validLabelBody(mediaType, body, multiple) {
-		return nil, "", ErrInvalidResponse
+	if string(head) != prefix {
+		return 0, ErrInvalidResponse
 	}
-	return append([]byte(nil), body...), mediaType, nil
+	if _, err := writer.Write(head); err != nil {
+		return 0, err
+	}
+	written := int64(len(head))
+	buffer := make([]byte, readBufferSize)
+	for {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return written, errors.Join(errResponseRead, ctxErr)
+		}
+		count, readErr := reader.Read(buffer)
+		if count > 0 {
+			if written+int64(count) > labelResponseLimit {
+				return written, errResponseLimit
+			}
+			wrote, writeErr := writer.Write(buffer[:count])
+			written += int64(wrote)
+			if writeErr != nil {
+				return written, writeErr
+			}
+			if wrote != count {
+				return written, io.ErrShortWrite
+			}
+		}
+		switch {
+		case errors.Is(readErr, io.EOF):
+			return written, nil
+		case readErr != nil:
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return written, errors.Join(errResponseRead, ctxErr)
+			}
+			return written, errors.Join(errResponseRead, readErr)
+		}
+	}
 }
 
 func validLabelBody(mediaType string, body []byte, multiple bool) bool {
+	prefix, ok := labelPrefix(mediaType, multiple)
+	return ok && strings.HasPrefix(string(body), prefix)
+}
+
+func labelPrefix(mediaType string, multiple bool) (string, bool) {
 	switch mediaType {
 	case mimeTypePDF:
-		return !multiple && strings.HasPrefix(string(body), pdfMagicPrefix)
+		return pdfMagicPrefix, !multiple
 	case mimeTypeZPL:
-		return !multiple && strings.HasPrefix(string(body), zplMagicPrefix)
+		return zplMagicPrefix, !multiple
 	case mimeTypeZIP:
-		return multiple && strings.HasPrefix(string(body), zipMagicPrefix)
+		return zipMagicPrefix, multiple
 	default:
-		return false
+		return "", false
 	}
 }
 

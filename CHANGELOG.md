@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.1] - 2026-11-16
+
+### Fixed
+
+- ADD reports a matching package's `carrier_error` as `ErrCarrierOutage`,
+  including in HTTP error responses. It matches `ErrAmbiguous`. Call
+  OVERVIEW to reconcile the EID before attempting another ADD.
+- A successful OVERVIEW must contain a package array. A missing or null
+  array reports `ErrInvalidResponse` so callers can distinguish an invalid
+  reply from an explicit empty list.
+
 ## [0.4.0] - 2026-10-13
 
 ### Added
@@ -40,4 +51,5 @@ and this project adheres to
   object or an array of objects and rejects malformed input with
   `ErrInvalidResponse`.
 
+[0.4.1]: https://github.com/M1chlCZ/balikobot-go/compare/v0.4.0...v0.4.1
 [0.3.0]: https://github.com/M1chlCZ/balikobot-go/releases/tag/v0.3.0

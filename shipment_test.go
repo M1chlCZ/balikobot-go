@@ -215,6 +215,36 @@ func TestAddPackageClassifiesResponses(t *testing.T) {
 			want:       ErrRejected,
 		},
 		{
+			name:       "http 400 carrier outage is ambiguous",
+			statusCode: http.StatusBadRequest,
+			body:       `{"status":400,"packages":[{"eid":"018f00000000400080000000000000aa-S1","status":400,"errors":[{"attribute":"carrier_error"}],"package_id":null}]}`,
+			want:       ErrCarrierOutage,
+		},
+		{
+			name:       "http 200 carrier outage is ambiguous",
+			statusCode: http.StatusOK,
+			body:       `{"status":400,"packages":[{"eid":"018f00000000400080000000000000aa-S1","status":"400","errors":[{"attribute":"carrier_error"}]}]}`,
+			want:       ErrCarrierOutage,
+		},
+		{
+			name:       "http 503 carrier outage is ambiguous",
+			statusCode: http.StatusServiceUnavailable,
+			body:       `{"status":503,"packages":[{"eid":"018f00000000400080000000000000aa-S1","status":503,"errors":[{"attribute":"carrier_error"}]}]}`,
+			want:       ErrCarrierOutage,
+		},
+		{
+			name:       "carrier outage for a different eid preserves http error",
+			statusCode: http.StatusBadRequest,
+			body:       `{"status":400,"packages":[{"eid":"OTHER","status":400,"errors":[{"attribute":"carrier_error"}]}]}`,
+			want:       ErrRejected,
+		},
+		{
+			name:       "duplicate eid cannot identify a carrier outage",
+			statusCode: http.StatusBadRequest,
+			body:       `{"status":400,"packages":[{"eid":"OTHER","eid":"018f00000000400080000000000000aa-S1","status":400,"errors":[{"attribute":"carrier_error"}]}]}`,
+			want:       ErrRejected,
+		},
+		{
 			name:       "http 401 is permanent",
 			statusCode: http.StatusUnauthorized,
 			body:       `{"status": 401}`,
@@ -309,6 +339,9 @@ func TestAddPackageClassifiesResponses(t *testing.T) {
 			_, err := client.AddPackage(context.Background(), carrier.PPL, validTestAddRequest())
 			if !errors.Is(err, testCase.want) {
 				t.Fatalf("AddPackage error = %v, want %v", err, testCase.want)
+			}
+			if testCase.want == ErrCarrierOutage && !errors.Is(err, ErrAmbiguous) {
+				t.Fatalf("carrier outage must require reconciliation: %v", err)
 			}
 			if hint := retryHint(err); hint != testCase.wantHint {
 				t.Fatalf("retry hint = %v, want %v", hint, testCase.wantHint)
@@ -449,6 +482,31 @@ func TestOverviewMatchesExternalReference(t *testing.T) {
 		packages[0].PackageID != "add-ppl-1" || packages[1].PackageID != "42" ||
 		packages[1].EID != "legacy-eid" {
 		t.Fatalf("overview = %#v", packages)
+	}
+}
+
+func TestOverviewRequiresExplicitPackageList(t *testing.T) {
+	t.Parallel()
+
+	for body, want := range map[string]error{
+		`{}`:                               ErrInvalidResponse,
+		`{"status":200}`:                   ErrInvalidResponse,
+		`{"status":"208","packages":null}`: ErrInvalidResponse,
+		`{"status":200,"packages":[]}`:     nil,
+	} {
+		t.Run(body, func(t *testing.T) {
+			t.Parallel()
+			server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+				response.Header().Set("Content-Type", "application/json")
+				_, _ = response.Write([]byte(body))
+			}))
+			t.Cleanup(server.Close)
+			client := newTestClient(t, server)
+			packages, err := client.Overview(t.Context(), carrier.PPL, validTestAddRequest().EID)
+			if !errors.Is(err, want) || len(packages) != 0 {
+				t.Fatalf("Overview = %v, %v; want empty result and %v", packages, err, want)
+			}
+		})
 	}
 }
 

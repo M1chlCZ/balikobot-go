@@ -149,7 +149,7 @@ every call to use the new types, for example
 
 ## Errors
 
-The client returns six sentinel errors. Use `errors.Is` to test them.
+Use `errors.Is` to check these sentinel errors.
 
 | Error | Meaning | Action |
 | --- | --- | --- |
@@ -158,6 +158,7 @@ The client returns six sentinel errors. Use `errors.Is` to test them.
 | `ErrUnavailable` | The provider is unavailable, or the request never left the client. | Retry later. |
 | `ErrNotFound` | The carrier has no tracking data yet. | Poll again later. |
 | `ErrAmbiguous` | A mutating call can have reached the provider. | Reconcile with `Overview`. Then retry. |
+| `ErrCarrierOutage` | ADD returned `carrier_error` for this EID. This also matches `ErrAmbiguous`. | Reconcile the EID with `Overview` before another ADD. |
 | `ErrInvalidResponse` | The answer violates the protocol. | Inspect the provider. Do not retry blindly. |
 
 When a JSON endpoint answer carries a `Retry-After` header, `ErrUnavailable`

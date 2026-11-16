@@ -3,6 +3,7 @@ package balikobot
 import (
 	"context"
 	"encoding/json"
+	jsonv2 "encoding/json/v2"
 	"errors"
 	"io"
 	"mime"
@@ -282,10 +283,55 @@ func (client *Client) AddPackage(
 		return AddPackageResult{}, dispatchError(err)
 	}
 	defer response.Body.Close()
-	if err = addHTTPStatus(response); err != nil {
-		return AddPackageResult{}, err
+	statusErr := addHTTPStatus(response)
+	if statusErr != nil && (response.StatusCode < http.StatusBadRequest ||
+		response.StatusCode >= 600 || !isJSONResponse(response)) {
+		return AddPackageResult{}, statusErr
 	}
-	return client.decodeAddPackage(ctx, response, request.EID)
+	body, err := readResponseBody(ctx, response.Body, client.maxResponseBytes)
+	if err != nil {
+		if statusErr != nil {
+			return AddPackageResult{}, statusErr
+		}
+		return AddPackageResult{}, ErrAmbiguous
+	}
+	if statusErr == nil {
+		result, decodeErr := client.decodeAddPackage(body, request.EID)
+		if decodeErr == nil {
+			return result, nil
+		}
+		statusErr = decodeErr
+	}
+	if addCarrierOutage(body, request.EID) {
+		return AddPackageResult{}, ErrCarrierOutage
+	}
+	return AddPackageResult{}, statusErr
+}
+
+func addCarrierOutage(body []byte, expectedEID string) bool {
+	// Inspect only the failure fields. Carriers can omit or null the label fields.
+	var reply struct {
+		Packages []struct {
+			EID    string         `json:"eid"`
+			Status responseStatus `json:"status"`
+			Errors []struct {
+				Attribute string `json:"attribute"`
+			} `json:"errors"`
+		} `json:"packages"`
+	}
+	if jsonv2.Unmarshal(body, &reply) != nil || len(reply.Packages) != 1 {
+		return false
+	}
+	entry := reply.Packages[0]
+	if entry.EID != expectedEID || entry.Status.value < http.StatusBadRequest || entry.Status.value >= 600 {
+		return false
+	}
+	for _, issue := range entry.Errors {
+		if issue.Attribute == "carrier_error" {
+			return true
+		}
+	}
+	return false
 }
 
 func addHTTPStatus(response *http.Response) error {
@@ -311,13 +357,9 @@ func addHTTPStatus(response *http.Response) error {
 	return nil
 }
 
-func (client *Client) decodeAddPackage(
-	ctx context.Context,
-	response *http.Response,
-	expectedEID string,
-) (AddPackageResult, error) {
+func (client *Client) decodeAddPackage(body []byte, expectedEID string) (AddPackageResult, error) {
 	var result addResponse
-	if client.decodeResponse(ctx, response, &result) != nil || len(result.Status) == 0 {
+	if json.Unmarshal(body, &result) != nil || len(result.Status) == 0 {
 		return AddPackageResult{}, ErrAmbiguous
 	}
 	if err := topLevelStatusError(result.Status); err != nil {
@@ -366,6 +408,7 @@ func (client *Client) decodeAddPackage(
 // that have not yet been closed by ORDER. matchEID names the single entry
 // whose integrity is required for reconciliation: a malformed entry with a
 // different EID is skipped, while a malformed matching entry fails the call.
+// A missing or null package list returns ErrInvalidResponse.
 // The call is read-only, so Config.RetryPolicy applies to it.
 func (client *Client) Overview(
 	ctx context.Context,
@@ -414,6 +457,9 @@ func (client *Client) overview(
 	}
 	if statusErr := topLevelStatusError(result.Status); statusErr != nil {
 		return nil, statusErr
+	}
+	if result.Packages == nil {
+		return nil, ErrInvalidResponse
 	}
 	packages := make([]OverviewPackage, 0, len(result.Packages))
 	for _, entry := range result.Packages {

@@ -26,6 +26,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"mime"
 	"net"
@@ -120,6 +121,9 @@ var (
 	// ErrAmbiguous reports that a mutating call may have reached the provider.
 	// Reconcile the result by external reference before any retry.
 	ErrAmbiguous = errors.New("balikobot: request outcome is unknown")
+	// ErrCarrierOutage reports an ADD carrier_error for the requested EID.
+	// It matches ErrAmbiguous because the carrier may have accepted the package.
+	ErrCarrierOutage = fmt.Errorf("balikobot: carrier reported an error: %w", ErrAmbiguous)
 )
 
 // TransientError reports a retryable provider answer and carries the optional
